@@ -182,9 +182,9 @@ def test_switching_dataset_refreshes_and_retires_the_explicit_domain_pack(tmp_pa
         relation="transform",
     )
     codes = [
-        f"assert 'backside_he_leak' in doc(self.domain_rules)\nawait self.select_dataset({child['id']!r})",
-        "try:\n doc(self.domain_rules)\nexcept AttributeError:\n pass\nelse:\n raise AssertionError('Previous scope skill is still exposed')\nawait self.return_dataset('root')",
-        "assert 'backside_he_leak' in doc(self.domain_rules)\nreturn_result({'summary':'领域包随数据范围切换'})",
+        f"assert 'backside_he_leak' in self.domain_rules.read_file('SKILL.md')\nawait self.select_dataset({child['id']!r})",
+        "try:\n self.domain_rules.read_file('SKILL.md')\nexcept AttributeError:\n pass\nelse:\n raise AssertionError('Previous scope skill is still exposed')\nawait self.return_dataset('root')",
+        "assert 'backside_he_leak' in self.domain_rules.read_file('SKILL.md')\nreturn_result({'summary':'领域包随数据范围切换'})",
     ]
     responses = [
         LLMResponse(
@@ -206,6 +206,11 @@ def test_switching_dataset_refreshes_and_retires_the_explicit_domain_pack(tmp_pa
             result = await agent.research("切换并回退领域包")
             assert result.summary == "领域包随数据范围切换"
             assert len(client.calls) == 3
+            prompts = [str(call.messages[0]["content"]) for call in client.calls]
+            assert "backside_he_leak" in prompts[0]
+            assert "backside_he_leak" not in prompts[1]
+            assert "未加载专用工艺知识" in prompts[1]
+            assert "backside_he_leak" in prompts[2]
             assert "domain.domain_rules" in agent._knowledge_registry.activated()
         finally:
             await agent.aclose()

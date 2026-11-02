@@ -28,7 +28,7 @@ def install_research_context(agent, task, feedback=None, ledger=None):
         "未知工具契约先用doc或小步调用确认，不在思考中猜测返回字段；尽早执行并看实际结果，不把整个任务预演成巨型单元。"
         "同lot时间点不是独立样本；学得的特征和预处理须在训练fold内拟合。"
         "不能把PCA分离或分类高分当作根因证明；保留失败、反证和撤回。"
-        "完整物理/统计规则可用doc(self.physics)、doc(self.statistics)按需读取。",
+        "完整物理/统计规则可用self.physics.read_file('SKILL.md')、self.statistics.read_file('SKILL.md')按需读取；领域包启用时用self.domain_rules.read_file('SKILL.md')。doc用于接口检查，代理对象的doc不代表技能正文。",
         prefix=True,
     )
     agent.context["case_constraints"] = Context(

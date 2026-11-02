@@ -99,6 +99,9 @@ class AutoresearchAgent(Agent):
             self._datasets = DatasetSession(workspace.run, workspace.events)
             workspace.dataset_session = self._datasets
             self._formula_lab.data_session = self._datasets
+        from .execution_observer import install_execution_observer
+
+        install_execution_observer(self)
         self.round_number = 0
 
     async def inspect_dataset(

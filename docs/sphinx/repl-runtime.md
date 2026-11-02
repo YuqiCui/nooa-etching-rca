@@ -6,7 +6,7 @@
 
 | 能力 | 实现入口 | 已验证的边界 |
 |---|---|---|
-| 持续解释器 | `PersistentKernel`、`ExternalCell` | 同一生命周期内共享 namespace 和事件循环，保留函数全局引用、生成器和锁；不靠 pickle 重建 |
+| 持续解释器 | 科学 `PersistentKernel`、NOOA `SandboxedExecutor` | 同一生命周期内共享 namespace 和事件循环，保留函数全局引用、生成器和锁；不靠 pickle 重建 |
 | 精确版本源码 | `CodeBuffers` | 比较并交换式写入、唯一文本替换、明确 revision 执行；编辑不修改正在使用的函数 |
 | 可丢弃实验 | `CodeExperiments` | 独立 worker、冻结输入副本和 JSON 参数；失败不改变主 REPL 和正式产物 |
 | 宿主执行证据 | `ExecutionObservations` | 外层/内层父子关系、源码、异常、输出与状态；外层随后失败不丢已发生的内层记录 |
@@ -20,9 +20,13 @@
 :alt: 源码编辑产生新版本，隔离实验给出宿主执行证据；失败进入下一轮上下文，修改后重放原检查，再单独验目标并显式发布产物。
 ```
 
+## 原生执行器与能力配置
+
+当前外层直接使用官方CodeActV2和SandboxedExecutor，旧SecureCodeActV2/ExternalCell、子进程代理及JSON协议已移除。能力探测只选择官方SandboxConfig，不自行重建namespace、helper或返回协议。环境变量与REST配置见[运维说明](operations.md)。本章旧PR验收属于历史版本；原生迁移的验证范围单独记录，不冒充旧边界仍全部成立。
+
 ## 两层长驻对象的寿命
 
-外层 `python_cell` 在同一次 NOOA 生成调用内复用无凭据进程；科学 `run_code` / `code_run` 在当前研究轮次的 `PythonWorkspace` 中复用另一独立解释器。二者通过工具协议通信，不直接共享 Python 对象。普通函数、DataFrame、生成器和锁可以留在各自 namespace；科学函数重新定义后读取的是当前 namespace 的全局绑定。
+外层 `python_cell` 在同一次 NOOA 生成调用内复用官方fork worker；科学 `run_code` / `code_run` 在当前研究轮次的 `PythonWorkspace` 中复用另一独立解释器。二者通过工具协议通信，不直接共享 Python 对象。官方外层保持其支持的活对象语义；科学函数、DataFrame、生成器和锁可以留在科学namespace；科学函数重新定义后读取的是当前 namespace 的全局绑定。
 
 `run_script` 使用独立临时内核，不继承交互变量；`code_experiment` 则从显式源码、参数和冻结数据重建实验输入。它们结束后关闭自身 worker，不清空主科学 REPL。
 
@@ -36,7 +40,7 @@
 | 普通运行异常，包括执行中主动抛出 SyntaxError | 关闭受影响内核，下次执行重建 | 报错前的对象修改没有自动事务回滚 |
 | 超时、取消、崩溃、协议或清理失败 | 使受影响内核失效并保留诊断 | 退出码为零但没有匹配完成帧不能算成功 |
 | 临时脚本或隔离实验失败 | 关闭临时 worker，主内核不受该失败影响 | 已写入临时目录的文件不等于正式证据 |
-| 外层 cell 失败 | 重置外层 namespace，保留已完成工具记录 | 先前工具产生的文件或副作用没有撤销 |
+| 外层 cell 运行异常 | 按NOOA原生规则处理，普通异常可保留namespace；超时/崩溃按上游恢复配置重建 | 不应把科学内核“运行失败即重置”的规则套到原生外层；工具副作用不会撤销 |
 
 运行失败重置不能撤销文件写入、工具调用或共享外部系统的副作用。高风险试错应放入独立实验，不能靠删除几个变量就声称现场干净。Linux 科学 cell 成功返回前还会清理其启动的子进程，保留内核引导链；活 Python 对象可以持续，后台子进程不能跨 cell 存活。CPU 上限按内核寿命累计，墙钟截止时间按 cell 检查。
 

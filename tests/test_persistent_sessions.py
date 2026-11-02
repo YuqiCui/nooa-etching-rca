@@ -1,12 +1,10 @@
 """Live-object semantics and explicit failure invalidation in real guarded workers."""
 
 import asyncio
-from types import SimpleNamespace
 
 from test_capabilities import public_case
 
 from factor_demo.research_workspace import PythonWorkspace
-from factor_demo.secure_codeact import ExternalCell
 
 
 def test_scientific_live_objects_rebinding_and_definition_replacement(tmp_path):
@@ -81,38 +79,6 @@ def test_timeout_crash_and_script_never_leave_partial_state(tmp_path):
             assert (await worker.execute("assert 'keep' not in globals()"))["ok"]
         finally:
             await worker.close()
-
-    asyncio.run(run())
-
-
-def test_outer_repl_keeps_objects_and_cleans_failed_epoch():
-    async def run():
-        call = SimpleNamespace(bound_parameters=dict, return_type=dict, method_name="research")
-        outer = ExternalCell(SimpleNamespace(), call, timeout=10)
-        try:
-            a = await outer.run_cell(
-                "import os\npid=os.getpid()\nx=1\ndef f():\n return x\ng=(i for i in range(3))",
-                execution_count=1,
-            )
-            assert a.error is None, a.error
-            b = await outer.run_cell(
-                "x=2\nassert f()==2\nassert os.getpid()==pid\nassert next(g)==0\nprint(f())\ndef f():\n return x*10",
-                execution_count=2,
-            )
-            assert b.error is None, b.error
-            assert (
-                await outer.run_cell("x=3\nassert f()==30\nreturn 42", execution_count=3)
-            ).returned_value == 42
-            syntax = await outer.run_cell("def bad(:", execution_count=4)
-            assert syntax.error and outer.process is not None
-            assert (await outer.run_cell("assert x==3", execution_count=5)).error is None
-            failed = await outer.run_cell('x=99\nraise ValueError("bad")', execution_count=6)
-            assert failed.error and outer.process is None
-            assert (
-                await outer.run_cell("assert 'x' not in globals()", execution_count=7)
-            ).error is None
-        finally:
-            await outer.aclose()
 
     asyncio.run(run())
 

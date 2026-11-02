@@ -107,3 +107,20 @@ request_data只暴露未来统一拉数接口；未配置时返回unavailable，
 研究完成后在Vue“收尾评估”页冻结当前定义，或执行`factor-demo finalize-etch --run runs/你的会话`；`factor-demo evaluation --run ...`只读结果。已冻结报告的变化不允许再次选优。画图和一般探索不强制评估。
 
 `python scripts/run_blind_benchmark.py --root data/一个新目录 --runs 180`准备六种中性命名场景，映射和真值保持在发现输入之外。`--score`只评分已产生的报告，缺失报告不会生成假分数。
+
+## 原生NOOA外层沙箱配置（Linux）
+
+外层固定使用标准CodeActV2/SandboxedExecutor；不根据级别切换到另一个自定义REPL。启动时探测能力、记录选中的配置，doctor的orchestration_sandbox描述原生外层，原backend字段描述科学计算层。
+
+| 环境变量 | 默认与含义 |
+|---|---|
+| FACTOR_SANDBOX_FILESYSTEM | auto：有Landlock则启用；required：必须具备；off：明确关闭文件隔离 |
+| FACTOR_CELL_ALLOW_NETWORK | 0：要求seccomp阻止新建互联网socket；1：允许外层与科学worker直接REST请求 |
+| FACTOR_SANDBOX_WORKSPACE | 空：不额外授权写目录；非空必须是已有目录，作为原生外层读写workspace |
+| FACTOR_SANDBOX_MEMORY_MB | 2048：原生worker虚拟地址空间基线之上的内存余量；0关闭此项限制 |
+| FACTOR_SANDBOX_CPU_SECONDS | 300：原生worker生命周期CPU限制；0关闭此项限制 |
+| FACTOR_CELL_TOOL_TIMEOUT | 330秒：原生宿主broker单次工具调用期限，与cell执行时间分开 |
+
+配置始终require=True：只启用已选择的机制，不在失败后偷偷取消已声明的保护。auto在Linux5.0缺Landlock时可选无文件限制级别；不是相同文件安全保证，也不创建PID namespace。网络禁止但seccomp不可用时明确拒绝，管理员可显式设网络允许。采用NOOA默认代码规则；直接REST调用应使用httpx.AsyncClient等异步方式，避免同步阻塞被框架校验拒绝。主机工具访问网络与worker是否允许直接联网是不同路径。
+
+本次仅在82 Linux验证；实际5.0目标机仍需原生能力探测和应用验收。macOS不提供本次原生外层运行支持。科学计算执行层的Landlock/bubblewrap/process选择仍独立存在，不要把两层能力合并成一个安全等级。

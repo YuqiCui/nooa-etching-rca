@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -62,102 +60,6 @@ def test_issue2_landlock_without_pidns_fail_closed(monkeypatch):
     monkeypatch.setenv("FACTOR_ALLOW_LANDLOCK_WITHOUT_PIDNS", "1")
     cmd = sb.launch([Path("/tmp/x.py")], [], ["/tmp"])
     assert any("cell_reaper" in str(part) for part in cmd)
-
-
-def test_issue2_cell_wall_clock_covers_tool_dispatch():
-    """Overall deadline decrements during tool waits; second slow tool times out."""
-    from factor_demo.secure_codeact import ExternalCell
-
-    class Call:
-        method_name = "run"
-        return_type = dict
-
-        def bound_parameters(self):
-            return {}
-
-    class Agent:
-        pass
-
-    cell = ExternalCell(Agent(), Call(), timeout=1)
-    cell.tool_timeout = 5
-    cell.max_tool_calls = 8
-    cell.tools = {"ping": "ping"}
-
-    async def slow_dispatch(message):
-        await asyncio.sleep(0.7)
-        return {"ok": True}
-
-    cell.dispatch = slow_dispatch  # type: ignore[method-assign]
-
-    token = "deadbeef"
-    lines = [
-        (
-            b'{"kind":"tool","cell":"%s","sequence":1,"name":"ping","arguments":{}}\n'
-            % token.encode()
-        ),
-        (
-            b'{"kind":"tool","cell":"%s","sequence":2,"name":"ping","arguments":{}}\n'
-            % token.encode()
-        ),
-    ]
-
-    class FakeStdout:
-        def __init__(self):
-            self._i = 0
-
-        async def readline(self):
-            if self._i < len(lines):
-                line = lines[self._i]
-                self._i += 1
-                return line
-            await asyncio.sleep(10)
-            return b""
-
-    class FakeProcess:
-        def __init__(self):
-            self.stdin = MagicMock()
-            self.stdin.write = MagicMock()
-            self.stdin.drain = AsyncMock()
-            self.stdout = FakeStdout()
-            self.stderr = MagicMock()
-            self.stderr.read = AsyncMock(return_value=b"")
-            self.returncode = 0
-            self.pid = os.getpid()
-
-        async def wait(self):
-            return 0
-
-    async def fake_create(*args, **kwargs):
-        return FakeProcess()
-
-    async def exercise():
-        monkey = pytest.MonkeyPatch()
-        try:
-            monkey.setattr(asyncio, "create_subprocess_exec", fake_create)
-            from factor_demo import secure_codeact as sc
-
-            monkey.setattr(sc, "reap", AsyncMock())
-            monkey.setattr(sc, "apply_cell_cgroup_pids", lambda: None)
-            monkey.setattr(sc, "ensure_child_subreaper", lambda: None)
-            monkey.setattr(sc, "launch", lambda *a, **k: ["true"])
-            monkey.setattr(sc, "child_environment", lambda *a, **k: {})
-
-            class FixedUUID:
-                hex = token
-
-                @staticmethod
-                def uuid4():
-                    return FixedUUID()
-
-            monkey.setattr(sc, "uuid", FixedUUID)
-            result = await cell.run_cell("pass")
-            assert result.error is not None
-            assert "wall-clock budget exhausted" in str(result.error)
-        finally:
-            monkey.undo()
-            await cell.aclose()
-
-    asyncio.run(exercise())
 
 
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="seccomp")

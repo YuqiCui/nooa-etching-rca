@@ -8,8 +8,9 @@ from .models import Conclusion
 
 with hidden:
     from nooa.config.strategy_config import CodeActConfig
+    from nooa.strategies import CodeActV2
 
-    from ..secure_codeact import SecureCodeActV2 as CodeActV2
+    from ..native_sandbox import sandbox_settings
 
 
 class FactorResearchAgent(Agent):
@@ -64,7 +65,11 @@ class FactorResearchAgent(Agent):
     @strategy(
         CodeActV2(
             config=CodeActConfig(
-                max_iterations=22, max_retries=1, execution_backend="sandbox", cell_timeout=60
+                max_iterations=22,
+                max_retries=1,
+                execution_backend="sandbox",
+                cell_timeout=60,
+                sandbox=sandbox_settings(),
             )
         )
     )

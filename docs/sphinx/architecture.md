@@ -25,7 +25,7 @@
 | 编排 | `autoresearch.py`, `research_branches.py` | 本轮对象组合、上下文恢复、分支生命周期、最终发布 |
 | 研究 | `autoresearch_agent.py`, `strategy_factory.py` | 公开研究方法、工具、V2/审查/反思策略 |
 | 证据 | `research_models.py`, `evidence.py`, `review_pipeline.py` | 输出契约、确定性检查、审查与不可变修订 |
-| 执行 | `secure_codeact.py`, `research_workspace.py`, `persistent_kernel.py`, `session_cell.py` | 无凭据外层/科学长驻内核、精确编译、失败失效和输出采集 |
+| 执行 | `native_sandbox.py`, `execution_observer.py`, `research_workspace.py`, `persistent_kernel.py` | 原生外层能力配置与执行中间件；科学内核另行管理 |
 | 源码与实验 | `code_buffers.py`, `code_experiments.py` | 精确revision、冻结输入实验、检查与显式产物发布 |
 | 执行观察 | `execution_observations.py`, `execution_provenance.py` | 父子观察、输入/源码/产物来源、原路径复验和目标检查 |
 | 请求 | `runtime.py`, `budget.py`, `provider_stream.py` | 模型配置、原生准入、token账本、真实流观察 |
@@ -43,7 +43,7 @@ NOOA提供CodeActV2、Predict/Reflexion、Context/TextSkill、SQLiteStorageManag
 
 外层NOOA执行环境负责调用公开工具与调度；它的cwd不等于研究workspace。在外层直接 `open('artifacts/...')` 或 `savefig` 可能写到错误位置。科学worker是持久Python进程，cwd才是本方向workspace，可读取本方向选中的不可变数据版本，且不继承API凭据。
 
-同一生成调用的外层 cell 保留自己的 namespace 和事件循环；主科学 `run_code` / `code_run` 则在当前研究轮的另一个内核中复用活对象。二者不直接共享Python对象。编译失败保留原内存，运行异常、超时、取消、崩溃或清理失败使受影响内核失效。新请求和数据切换也不恢复旧活对象。
+同一生成调用的外层 cell 保留自己的 namespace 和事件循环；主科学 `run_code` / `code_run` 则在当前研究轮的另一个内核中复用活对象。二者不直接共享Python对象。科学内核编译失败保留原内存，运行异常、超时、取消、崩溃或清理失败使其失效；外层异常保留或恢复行为遵循NOOA原生执行器。新请求和数据切换也不恢复旧活对象。
 
 `run_script` 使用独立临时内核；`code_experiment` 从显式源码revision、JSON参数与冻结输入建立另一个可丢弃worker。其失败不清空主科学内存，也不能覆盖正式产物。源码版本、执行来源、父子观察、修复关系跨轮保留，继续计算必须显式重建所需输入，不隐式重放副作用。
 
@@ -63,7 +63,7 @@ NOOA提供CodeActV2、Predict/Reflexion、Context/TextSkill、SQLiteStorageManag
 
 ## 审核后的执行与交付路径
 
-可信主进程仅持有NOOA编排、模型客户端、预算和明确工具实现。模型生成的外层CodeAct经JSON代理进入本次生成调用的无凭据长驻进程；科学Python进入当前研究轮的另一个长驻内核，脚本和独立实验例外。二者均不继承live agent。宿主核对完成协议、实际退出状态、来源账本和父子观察，不能仅因进程持续或返回零就证明科学正确。只读Predict reviewer可使用另一已配置模型，全部请求仍受同一预算约束。最终Markdown由核验结果确定性渲染与推送。留出test/仿真参考仅由单独收尾入口评分。细节与测试映射见[审核问题修复](audit-remediation.md)。
+可信主进程仅持有NOOA编排、模型客户端、预算和明确工具实现。模型生成的外层CodeAct使用官方SandboxedExecutor及parent-agent proxy，原生fork worker共享当前生成调用的REPL；项目只在公开execute_python中间件上记录外层观察，不替换执行器。科学Python仍使用独立启动的无凭据长驻内核，脚本和实验另有临时实例。宿主核对完成协议、来源账本和父子观察，不能仅因进程持续或返回零证明科学正确。只读Predict reviewer可使用另一已配置模型，全部请求仍受同一预算约束。最终Markdown由核验结果确定性渲染与推送。留出test/仿真参考仅由单独收尾入口评分。细节与测试映射见[审核问题修复](audit-remediation.md)。
 
 ## 持久化服务与表结构
 

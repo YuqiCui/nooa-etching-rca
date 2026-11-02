@@ -70,9 +70,11 @@ def main():
         p.add_argument("--run", type=Path, required=True)
     args = parser.parse_args()
     if args.command == "doctor":
+        from .native_sandbox import sandbox_status
         from .sandboxing import dotenv_warnings, execution_info, prepare_font_cache
 
         info = execution_info()
+        info["orchestration_sandbox"] = sandbox_status()
         info["warnings"] = dotenv_warnings()
         if args.warm_font_cache:
             info.update(prepare_font_cache())

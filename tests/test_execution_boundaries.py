@@ -17,7 +17,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def test_generated_outer_cell_has_no_host_files_client_or_live_agent(tmp_path):
+def test_native_outer_cell_enforces_configured_filesystem_and_calls_host_tools(tmp_path):
     root = public_case(tmp_path / "case")
     secret = tmp_path / "outside.txt"
     secret.write_text("DUMMY_NO_REAL_SECRET")
@@ -29,18 +29,9 @@ except (PermissionError, FileNotFoundError):
  pass
 else:
  raise AssertionError('host file became readable')
-try:
- self._llm
-except AttributeError:
- pass
-else:
- raise AssertionError('live client became reachable')
-try:
- self._workspace
-except AttributeError:
- pass
-else:
- raise AssertionError('live workspace became reachable')
+# Upstream sandbox uses its standard parent-agent proxy, not the removed
+# project-only whitelist. Do not assert the old private-attribute boundary.
+assert callable(methods) and callable(variables)
 print(await self.run_code("print('ALLOWED_TOOL_WORKS')"))
 return_result(ResearchReply(summary='only declared tools are reachable',intent='visualization'))"""
     response = LLMResponse(

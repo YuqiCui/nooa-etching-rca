@@ -4,18 +4,22 @@
 
 ```{mermaid} diagrams/trust.mmd
 :caption: 编排持有模型凭据；两类生成代码都在独立受限子进程执行，科学输出由宿主监督。
-:alt: 可信主进程运行NOOA和工具代理，外层CodeAct和科学Python分别在无凭据进程中运行，隐藏测试和真值仅供收尾评分。
+:alt: 可信主进程运行NOOA和工具代理，原生外层fork worker与另行启动的无凭据科学Python具有不同边界，隐藏测试和真值仅供收尾评分。
 ```
 
 ## 外层 CodeAct 与科学代码
 
-NOOA仍负责CodeActV2的推理、工具策略、历史和自动摘要；`SecureCodeActV2`让同一次生成调用的外层cell共用一个无凭据长驻进程。它只拿到声明的工具代理、参数和结构化契约，没有live agent、模型客户端、凭据或父进程对象。工具请求采用限长JSON，宿主独立核对方法白名单、参数类型、cell身份和调用序号。它不能通过反序列化让宿主加载任意Python对象。
+外层生成代码直接使用NOOA `CodeActV2` 和标准 `SandboxedExecutor`。项目不再覆盖执行器、创建自定义代理或改写官方REPL辅助函数。NOOA的fork worker持有其标准namespace，通过原生parent-agent proxy访问宿主；这与旧版只提供工具白名单的新解释器边界不同。`hidden`是文档/可见性机制，不应当作任意Python的权限认证；不再承诺外层进程没有继承宿主内存、凭据或全部私有对象不可达。
+
+启动时实际探测Landlock、seccomp及rlimit，通过 `SandboxConfig(require=True)` 只启用明确选中的机制。`FACTOR_SANDBOX_FILESYSTEM=auto` 有Landlock时启用，否则披露无文件隔离；`required`要求Landlock，`off`明确关闭。`FACTOR_CELL_ALLOW_NETWORK=1`允许直接REST请求；默认0要求原生seccomp可用，否则拒绝启动。没有Landlock的Linux5.0可用无文件限制的原生进程后端，但仍需实际验证目标环境；82上的无Landlock配置测试不等于5.0实机测试。`doctor`单独显示外层原生与科学执行层的能力。
+
+原生外层普通运行异常遵循NOOA规则，可保留已经发生的namespace修改；超时/崩溃按上游恢复配置重建。项目中间件只记录父子执行观察和附加工具证据，不修改captured locals、返回协议、辅助函数或异常状态。工具副作用不自动回滚。
 
 科学代码也使用长驻进程，同一次研究调用共享namespace和事件循环，不通过pickle恢复变量。编译错误不执行，保留现有状态；运行异常使受影响内核失效并停止，下一次执行使用新epoch。脚本使用独立临时内核。超时、取消、崩溃和结束清理进程组；已经发生的工具副作用和文件写入不回滚。新用户请求仍建立新研究调用，磁盘对话存档不代表活对象已恢复。
 
 科学stdout/stderr写入每cell独立文件并由宿主流式读取，与限长、请求关联的完成帧分开；打印JSON不会完成cell。stdout保留首部、stderr保留尾部，各262144字符并继续排空。完成帧来自不可信Python执行进程，不能作为抵御恶意同进程代码伪造的证明，也不证明科学正确性；仍需宿主证据检查。缺失匹配完成帧的退出视为崩溃。CPU资源上限按内核生命周期累计，每cell另外有墙钟截止时间。
 
-macOS使用deny-default的sandbox-exec规则；Linux使用Landlock或bubblewrap的受限挂载视图，再设置seccomp和资源上限；缺少Landlock时会实际验证命名空间后端，而不是依据内核版本猜测。仅允许解释器/依赖、引导代码、选中只读数据版本与本方向workspace；`factor_demo`应用源码从运行库授权中排除。Linux引导仅复制固定NOOA版本的底层约束模块并保留许可头，不在每个科学进程导入整套agent SDK；子进程显式使用本地模型成本表，避免无关初始化。`FACTOR_LINUX_BACKEND=auto`下若Landlock与bubblewrap都不可用（如内核<5.13的Kubernetes容器），会记录警告并回退到`process`后端（仅rlimit+尽力seccomp，文件系统隔离依赖容器，见[Linux部署指南](linux-arm.md)）；设置`FACTOR_STRICT_BACKEND=1`或显式选择`landlock`/`bubblewrap`时仍拒绝执行。Runtime checks现已停用，当前Linux实际验收见[验证记录](validation.md)中的82精确提交结果；文档构建不能代替运行回归。
+macOS使用deny-default的sandbox-exec规则；Linux使用Landlock或bubblewrap的受限挂载视图，再设置seccomp和资源上限；缺少Landlock时会实际验证命名空间后端，而不是依据内核版本猜测。仅允许解释器/依赖、引导代码、选中只读数据版本与本方向workspace；`factor_demo`应用源码从运行库授权中排除。Linux引导仅复制固定NOOA版本的底层约束模块并保留许可头，不在每个科学进程导入整套agent SDK；子进程显式使用本地模型成本表，避免无关初始化。`FACTOR_LINUX_BACKEND=auto`下若Landlock与bubblewrap都不可用（如内核<5.13的Kubernetes容器），会记录警告并回退到`process`后端（仅rlimit+尽力seccomp，文件系统隔离依赖容器，见[Linux部署指南](linux-arm.md)）；设置`FACTOR_STRICT_BACKEND=1`或显式选择`landlock`/`bubblewrap`时仍拒绝执行。以上Landlock/bubblewrap挂载和扩展syscall限制描述科学计算执行层；原生外层只使用NOOA声明的Landlock/seccomp/rlimit，不额外创建PID namespace。Runtime checks现已停用，当前Linux实际验收见[验证记录](validation.md)中的82精确提交结果；文档构建不能代替运行回归。
 
 读写规则不以`/Users`作为唯一边界。科学进程不继承控制FD、模型key、原始会话目录或test/truth路径；通信控制、源码副本、输入哈希和执行账本由宿主保存。外层代理仍可调用已公开的工具，所以每个工具必须自己检查数据范围、产物路径和任务权限。进程约束与回放均不证明任意算法的数学正确性。
 
@@ -43,6 +47,6 @@ macOS使用deny-default的sandbox-exec规则；Linux使用Landlock或bubblewrap�
 - **Network toggle** `FACTOR_CELL_ALLOW_NETWORK=1` (default off): the seccomp denylist stops refusing `socket`/`socketpair` (connect, send/recv, sockopts were never filtered; everything else in the filter stays), resolver/CA files (`/etc/resolv.conf`, `/etc/hosts`, `/etc/nsswitch.conf`, `/etc/ssl`, …) become readable, and bubblewrap adds `--share-net`. Honored by all three Linux backends (Landlock itself does not filter network here). macOS sandbox-exec is unchanged. Restrict egress with a NetworkPolicy.
 - **Landlock backend**: filesystem rules come from Landlock. Process isolation requires a PID namespace via `bwrap --unshare-pid --die-with-parent` whenever bubblewrap is installed. **Landlock without bubblewrap is fail-closed by default**; set `FACTOR_ALLOW_LANDLOCK_WITHOUT_PIDNS=1` only for explicit degraded testing. A trusted `cell_reaper` remains a subreaper with SIGSTOP/SIGKILL fallback.
 - **Process caps**: Linux uses `RLIMIT_NPROC` (default 512; override with `FACTOR_CELL_NPROC`). macOS is opt-in: only an explicit `FACTOR_CELL_NPROC` applies the rlimit because XNU counts all processes of the login uid. Cgroup `pids.max` is best effort when `FACTOR_CELL_CGROUP` points at a delegated writable v2 directory; it is not guaranteed to be available.
-- **CodeAct cell wall-clock**: `ExternalCell.run_cell` enforces a single overall deadline (`cell_timeout`, optionally tuned by config). Every wait — including tool dispatch — consumes real elapsed time. Each tool call is capped at `min(FACTOR_CELL_TOOL_TIMEOUT, remaining)` (default tool cap 330s). Max tool calls per cell: `FACTOR_CELL_MAX_TOOL_CALLS` (default 64). On expiry the cell process tree is reaped and a clear timeout error is returned.
+- **Native outer deadlines**: NOOA manages cell deadlines and recovery. Brokered host tools have a separate `broker_timeout_s` (configured with `FACTOR_CELL_TOOL_TIMEOUT`, default 330s); their waiting time is not charged like the removed executor's overall deadline. There is no project-specific per-cell tool-call-count cap. Research iteration/call/token budgets remain active.
 - **Linux seccomp** (both backends): denies sockets/`io_uring_*`, cross-process signals, ptrace/process-vm/pidfd, namespaces (`unshare`/`setns`/clone `NEW*`), `perf_event_open`/`userfaultfd`/`bpf`, keyring, kexec/modules, mount graph syscalls, handle lookups, swap/reboot/acct/quotactl/`personality`, and x86 `iopl`/`ioperm`/`modify_ldt`. `clone3` returns `ENOSYS`. `fork`/`exec` remain for scientific helpers. Wrong arch and x86_64 x32 ABI are rejected.
 - **macOS**: `(deny default)` sandbox-exec plus `RLIMIT_AS` / `RLIMIT_CPU`; `RLIMIT_NPROC` is opt-in. There is no Linux-style PID namespace or seccomp. Process-group reaping does not prove that arbitrary detached descendants are contained; Linux additionally checks `/proc` descendants at scientific cell boundaries.

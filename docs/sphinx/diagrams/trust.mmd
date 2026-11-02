@@ -7,8 +7,8 @@ flowchart TB
     TEST["私有test · 仿真参考"] --> EVAL["冻结后收尾评分"]
     VERIFY --> MD["规范Markdown直接推送"]
   end
-  subgraph OUTER["外层生成代码：本次生成调用长驻"]
-    CELL["CodeAct cell<br/>仅声明工具与参数"]
+  subgraph OUTER["外层：NOOA标准fork worker"]
+    CELL["CodeAct cell<br/>官方parent-agent proxy与辅助接口"]
   end
   NOOA --> CELL
   CELL --> RPC
@@ -19,5 +19,5 @@ flowchart TB
   end
   RPC --> PY
   PY -->|"分离的输出文件与完成协议"| LEDGER
-  RULES["macOS deny-default<br/>Linux Landlock / bubblewrap + seccomp<br/>REPL不靠pickle恢复活对象"] -.-> OUTER
+  RULES["科学层：受限worker<br/>原生外层：按能力选择Landlock/seccomp/rlimit"] -.-> OUTER
   RULES -.-> SCIENCE

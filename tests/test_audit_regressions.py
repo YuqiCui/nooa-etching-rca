@@ -29,7 +29,7 @@ def test_model_sees_working_skill_directory_and_essential_rules(tmp_path):
                 name="python_cell",
                 arguments=json.dumps(
                     {
-                        "code": "print(doc(self.statistics))\nreturn_result({'summary':'检查技能输入'})"
+                        "code": "rules = self.statistics.read_file('SKILL.md')\nassert 'fold' in rules\nprint(rules)\nreturn_result({'summary':'检查技能输入'})"
                     }
                 ),
             ),

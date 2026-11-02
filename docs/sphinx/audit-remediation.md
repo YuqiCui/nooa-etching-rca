@@ -6,7 +6,7 @@
 
 | 问题 | 当前设计 | 对应回归 |
 |---|---|---|
-| 外层生成代码持有live agent和主机文件权限 | 新进程、无凭据、只声明工具JSON代理，默认拒绝文件访问 | test_execution_boundaries、test_runtime |
+| 外层执行边界 | 当前使用NOOA标准fork/proxy与按能力选择的guard；旧白名单/无凭据承诺不再适用，关闭文件限制时依赖部署权限 | test_native_sandbox、test_execution_boundaries |
 | worker自报成功、伪造控制帧、超长输出导致串线 | 真实退出码、无控制FD、宿主管理cell顺序、输出限长并排空 | test_execution_boundaries、test_reliability_cleanup |
 | 技能缺失或运行配置与声明不一致 | 安装skills registry并将领域正文注入固定上下文；单一策略工厂 | test_capabilities |
 | 编造CSV也能成为已支持证据 | 保护执行账本；原始值/模型指标独立重算；显式证据等级 | test_evidence_provenance |

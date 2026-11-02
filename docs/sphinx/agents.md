@@ -4,7 +4,7 @@
 
 本场景需要模型根据中间证据决定下一步，临时编写统计或物理关系代码，并处理执行失败。仅让模型从预定义的几个筛选器中选择，无法覆盖原始曲线检查、估计器实现、批次置换和新因子构造。因此主研究使用原生CodeActV2与通用科学worker，算法自由度保留在研究层。
 
-CodeActV2沿用NOOA代码执行、事件、配置校验与工具机制。项目没有把旧版CodeActStrategy换一个名字，也没有使用自行解析Markdown代码块代替原生调用。方法可用 `_strategy=` 按本轮有效策略覆盖，避免通过修改共享策略对象影响同时运行的其他方法。
+CodeActV2沿用NOOA代码执行、事件、配置校验与工具机制。外层现直接使用标准CodeActV2和SandboxedExecutor，能力探测只产生SandboxConfig；没有自行解析Markdown或替换REPL协议。方法可用 `_strategy=` 按本轮有效策略覆盖，避免通过修改共享策略对象影响同时运行的其他方法。
 
 ```{mermaid} diagrams/agent-loop.mmd
 :caption: 主研究循环。确定性门禁和审查在候选交接处运行，正常科学探索仍由agent自由决定。
@@ -66,7 +66,7 @@ aeon集合输入通常有case/channel/time三个维度；具体方法必须核�
 
 worker为Numba JIT和joblib临时文件指定自身workspace下的缓存路径，继续保留文件/网络限制。核心依赖不等于安装了所有可选extras；遇到缺包先如实说明，由宿主补齐并锁定，不在隔离worker里联网安装。
 
-Agent类文档表达行为契约：以证据产生和修订假设、区分因果层级、使用公开工具、返回结构化引用，并正确理解外层调度环境与科学workspace的区别。通用物理与统计规则由 `core.physics` 和 `core.statistics` 两个TextSkill承载，原生SkillRegistry通过agent.skills接入框架的原生目录表达式，按实例注册。`fixed_recipe`只表示数据约束，不选择工艺知识。专用领域包通过schema的`knowledge_profile`显式选择，加载部署目录中已安装的文本技能；未指定时保持通用规则。核心规则也进入稳定Context，并要求按需读doc(self.statistics/physics)。
+Agent类文档表达行为契约：以证据产生和修订假设、区分因果层级、使用公开工具、返回结构化引用，并正确理解外层调度环境与科学workspace的区别。通用物理与统计规则由 `core.physics` 和 `core.statistics` 两个TextSkill承载，原生SkillRegistry通过agent.skills接入框架的原生目录表达式，按实例注册。`fixed_recipe`只表示数据约束，不选择工艺知识。专用领域包通过schema的`knowledge_profile`显式选择，加载部署目录中已安装的文本技能；未指定时保持通用规则。核心规则也进入稳定Context，并要求按需调用 `self.statistics.read_file('SKILL.md')` / `self.physics.read_file('SKILL.md')`。领域包启用时同样用 `self.domain_rules.read_file('SKILL.md')`。原生sandbox的 `doc(self)` 支持接口检查；`doc(self.<skill>)` 可能显示代理类型说明，不能用它代替技能正文读取。
 
 通用物理技能强调真实单位、控制回路、守恒关系、延迟、测量原理和可观测性；工艺、配方约束、时段与step来自数据和用户目标。刻蚀术语与仿真候选机制只属于显式选择的`etch`领域包。统计技能强调lot独立性、监督选择泄漏、OPLS一致变换、有限置换p值下界、恢复率分母和闭环证据依赖。两者不是固定算法脚本，而是研究和审查必须遵守的解释边界。
 
