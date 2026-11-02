@@ -9,15 +9,14 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
-import sqlite3
 import time
 import uuid
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Protocol
 
 import polars as pl
 
+from .autoresearch_agent_v2.database import create_dataset_service
 from .dataset_adapter import detect_schema, discovery_copy, index_frame, safe_path
 from .dataset_models import AcquisitionRequest, AcquisitionResult, DatasetDerivation, DatasetSchema
 from .io_utils import write_json
@@ -57,28 +56,7 @@ class DatasetRegistry:
         self.root = root.resolve()
         self.base = self.root / ".datasets"
         self.base.mkdir(parents=True, exist_ok=True)
-        with self.connect() as db:
-            db.executescript("""
-                CREATE TABLE IF NOT EXISTS datasets(id TEXT PRIMARY KEY,doc TEXT NOT NULL,created REAL NOT NULL);
-                CREATE TABLE IF NOT EXISTS scopes(owner TEXT PRIMARY KEY,root_id TEXT NOT NULL,current_id TEXT NOT NULL,stack TEXT NOT NULL);
-                CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
-                CREATE TABLE IF NOT EXISTS acquisition(owner TEXT,request_id TEXT,request TEXT,result TEXT,PRIMARY KEY(owner,request_id));
-            """)
-
-    @contextmanager
-    def connect(self, write=False):
-        db = sqlite3.connect(self.base / "registry.sqlite", timeout=15)
-        db.execute("PRAGMA journal_mode=WAL")
-        try:
-            if write:
-                db.execute("BEGIN IMMEDIATE")
-            yield db
-            db.commit()
-        except BaseException:
-            db.rollback()
-            raise
-        finally:
-            db.close()
+        self._storage = create_dataset_service(self.root)
 
     def get(self, identity: str) -> dict:
         if (
@@ -87,11 +65,10 @@ class DatasetRegistry:
             or any(c not in "0123456789abcdef" for c in identity[3:])
         ):
             raise ValueError("Invalid DatasetRef")
-        with self.connect() as db:
-            row = db.execute("SELECT doc FROM datasets WHERE id=?", (identity,)).fetchone()
-        if not row:
+        doc = self._storage.get(identity)
+        if doc is None:
             raise ValueError("Unknown DatasetRef")
-        return json.loads(row[0])
+        return doc
 
     def path(self, identity: str, verify=False) -> Path:
         doc = self.get(identity)
@@ -105,13 +82,8 @@ class DatasetRegistry:
         return root
 
     def list(self, offset=0, limit=50) -> dict:
-        with self.connect() as db:
-            rows = db.execute(
-                "SELECT doc FROM datasets ORDER BY created DESC,id LIMIT ? OFFSET ?",
-                (min(100, max(1, limit)), max(0, offset)),
-            ).fetchall()
-            total = db.execute("SELECT COUNT(*) FROM datasets").fetchone()[0]
-        return {"datasets": [json.loads(r[0]) for r in rows], "total": total, "offset": offset}
+        docs, total = self._storage.list(offset, limit)
+        return {"datasets": docs, "total": total, "offset": offset}
 
     def lineage(self, identity: str) -> dict:
         nodes = {}
@@ -367,17 +339,11 @@ class DatasetRegistry:
             }
             content_hash = hashlib.sha256(canonical(definition)).hexdigest()
             identity = "ds-" + content_hash[:32]
-            with self.connect() as db:
-                existing = db.execute("SELECT doc FROM datasets WHERE id=?", (identity,)).fetchone()
-            if existing:
-                return json.loads(existing[0])
+            existing = self._storage.get(identity)
+            if existing is not None:
+                return existing
             family = parent_docs[0]["family"] if relation == "version" and parent_docs else identity
-            with self.connect() as db:
-                versions = [
-                    json.loads(r[0])["version"]
-                    for r in db.execute("SELECT doc FROM datasets")
-                    if json.loads(r[0])["family"] == family
-                ]
+            versions = self._storage.family_versions(family)
             doc = {
                 **definition,
                 "id": identity,
@@ -407,30 +373,22 @@ class DatasetRegistry:
                 saved = self.base / "transforms" / code_hash
                 if not saved.exists():
                     shutil.copyfile(code, saved)
-            with self.connect(write=True) as db:
-                existing = db.execute("SELECT doc FROM datasets WHERE id=?", (identity,)).fetchone()
-                if existing:
-                    return json.loads(existing[0])
-                versions = [
-                    json.loads(r[0])["version"]
-                    for r in db.execute("SELECT doc FROM datasets")
-                    if json.loads(r[0])["family"] == family
-                ]
+            with self._storage.transaction() as versions_store:
+                existing = versions_store.get(identity)
+                if existing is not None:
+                    return existing
+                versions = versions_store.family_versions(family)
                 doc["version"] = max(versions, default=0) + 1
                 write_json(destination / "_dataset_ref.json", doc)
-                db.execute(
-                    "INSERT OR IGNORE INTO datasets VALUES(?,?,?)",
-                    (identity, json.dumps(doc, ensure_ascii=False), doc["created"]),
-                )
+                versions_store.publish(doc)
             return self.get(identity)
         finally:
             shutil.rmtree(staging)
 
     def bootstrap(self) -> dict:
-        with self.connect() as db:
-            row = db.execute("SELECT value FROM meta WHERE key='root'").fetchone()
-        if row:
-            return self.get(row[0])
+        identity = self._storage.root()
+        if identity is not None:
+            return self.get(identity)
         source = self.root / "input"
         schema = detect_schema(source)
         doc = self.register(
@@ -440,45 +398,42 @@ class DatasetRegistry:
             reason="Session discovery input",
             provenance={"kind": "session_input"},
         )
-        with self.connect(write=True) as db:
-            db.execute("INSERT OR IGNORE INTO meta VALUES('root',?)", (doc["id"],))
+        self._storage.bind_root(doc["id"])
         return doc
 
     def bind(self, owner: str, root_ref: str):
         self.get(root_ref)
-        with self.connect(write=True) as db:
-            db.execute(
-                "INSERT OR IGNORE INTO scopes VALUES(?,?,?,?)", (owner, root_ref, root_ref, "[]")
-            )
+        self._storage.bind_scope(owner, root_ref)
 
     def scope(self, owner: str) -> dict:
-        with self.connect() as db:
-            row = db.execute(
-                "SELECT root_id,current_id,stack FROM scopes WHERE owner=?", (owner,)
-            ).fetchone()
-        if not row:
-            raise ValueError("Dataset scope is not initialized")
-        return {"root": row[0], "current": row[1], "stack": json.loads(row[2])}
+        return self._storage.scope(owner)
 
     def select(self, owner: str, identity: str, back: str = "") -> dict:
         self.path(identity, verify=True) if not back else None
-        with self.connect(write=True) as db:
-            row = db.execute(
-                "SELECT root_id,current_id,stack FROM scopes WHERE owner=?", (owner,)
-            ).fetchone()
-            root, current, stack = row[0], row[1], json.loads(row[2])
-            if back == "root":
-                identity = root
-                stack = []
-            elif back == "parent":
-                identity = stack.pop() if stack else root
-            elif identity != current:
-                stack.append(current)
-            db.execute(
-                "UPDATE scopes SET current_id=?,stack=? WHERE owner=?",
-                (identity, json.dumps(stack), owner),
-            )
-        return self.get(identity)
+        return self.get(self._storage.select(owner, identity, back))
+
+    def acquisition(self, owner: str, request_id: str):
+        """读取已保存的采集请求和结果。
+
+        Args:
+            owner: 发起请求的方向。
+            request_id: 方向内的幂等请求标识。
+
+        Returns:
+            请求与结果文档；不存在时为 None。
+        """
+        return self._storage.acquisition(owner, request_id)
+
+    def save_acquisition(self, owner: str, request_id: str, request: dict, result: dict):
+        """保存采集请求和结果。
+
+        Args:
+            owner: 发起请求的方向。
+            request_id: 方向内的幂等请求标识。
+            request: 采集参数。
+            result: 已处理的数据集结果。
+        """
+        self._storage.save_acquisition(owner, request_id, request, result)
 
 
 class DatasetSession:
@@ -589,15 +544,11 @@ class DatasetSession:
         )
         for parent in request.parent_refs:
             self.authorize(parent)
-        with self.registry.connect() as db:
-            old = db.execute(
-                "SELECT request,result FROM acquisition WHERE owner=? AND request_id=?",
-                (self.owner, request.request_id),
-            ).fetchone()
+        old = self.registry.acquisition(self.owner, request.request_id)
         if old:
-            if json.loads(old[0]) != request.model_dump():
+            if old[0] != request.model_dump():
                 raise ValueError("Acquisition request_id reused with different parameters")
-            return json.loads(old[1])
+            return old[1]
         result = (
             await self.provider.acquire(request)
             if self.provider
@@ -626,11 +577,9 @@ class DatasetSession:
                 },
             )
             payload["dataset_ref"] = doc["id"]
-        with self.registry.connect(write=True) as db:
-            db.execute(
-                "INSERT INTO acquisition VALUES(?,?,?,?)",
-                (self.owner, request.request_id, request.model_dump_json(), json.dumps(payload)),
-            )
+        self.registry.save_acquisition(
+            self.owner, request.request_id, request.model_dump(), payload
+        )
         self.emit("acquisition", request_id=request.request_id, **payload)
         return payload
 

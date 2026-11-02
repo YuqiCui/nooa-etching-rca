@@ -35,13 +35,7 @@ def freeze_revision(run: Path, folder: Path, report: ResearchReply, verification
 def review_bundle(report, verification, events=None):
     observed = []
     if events:
-        observed = [
-            {"event": kind, "data": json.loads(data)}
-            for kind, data in events.db.execute(
-                "SELECT type,data FROM events WHERE agent_id=? AND type IN ('reflection.verdict','reflection.end') ORDER BY id DESC LIMIT 8",
-                (events.agent_id,),
-            ).fetchall()
-        ]
+        observed = events.reflection_events()
     return {
         "report": report.model_dump(),
         "saved_table_verification": verification,

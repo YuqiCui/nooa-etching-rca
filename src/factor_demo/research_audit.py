@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sqlite3
 from pathlib import Path
 
+from .autoresearch_agent_v2.database import create_conversation_audit_service
 from .io_utils import write_json
 
 
@@ -61,15 +61,7 @@ def audit_session(run: Path) -> dict:
         hashlib.sha256((run / "input" / name).read_bytes()).hexdigest() == digest
         for name, digest in session["public_sha256"].items()
     )
-    with sqlite3.connect(f"file:{(run / 'conversation.sqlite').resolve()}?mode=ro", uri=True) as db:
-        event_counts = dict(
-            db.execute("SELECT event_type, COUNT(*) FROM events GROUP BY event_type")
-        )
-        summaries = [
-            json.loads(row[0])
-            for row in db.execute("SELECT data FROM events WHERE event_type='Summary'")
-        ]
-        active_event_count = db.execute("SELECT COUNT(*) FROM active_tags").fetchone()[0]
+    event_counts, summaries, active_event_count = create_conversation_audit_service(run).summary()
     conversation = [json.loads(s) for s in (run / "conversation.jsonl").read_text().splitlines()]
     inputs = [c for c in conversation if "message" in c]
     for i, entry in enumerate(inputs):

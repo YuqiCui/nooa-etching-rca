@@ -18,6 +18,7 @@ def test_guard_bootstrap_is_small_and_never_loads_agent_or_model_client(tmp_path
     assert json.loads(result.stdout) == []
     assert "SPDX-License-Identifier: Apache-2.0" in (kit / "_guard_rules.py").read_text()
     assert child_environment(tmp_path)["LITELLM_LOCAL_MODEL_COST_MAP"] == "True"
+    assert child_environment(tmp_path)["PYTHON_DOTENV_DISABLED"] == "1"
 
 
 def test_child_environment_forces_litellm_production_mode(tmp_path, monkeypatch):

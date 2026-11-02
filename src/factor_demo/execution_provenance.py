@@ -1,27 +1,15 @@
 """Host-owned, bounded execution/artifact ledger; never trust child-written receipts."""
 
 import hashlib
-import json
 import shutil
-import sqlite3
 from pathlib import Path
 
+from .autoresearch_agent_v2.database import create_execution_service
 from .datasets import file_hash
 
 
 def next_cell(run: Path, previous: int = 0):
-    base = run / ".execution"
-    base.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(base / "ledger.sqlite") as db:
-        db.execute("CREATE TABLE IF NOT EXISTS sequence(value INTEGER NOT NULL)")
-        db.execute("BEGIN IMMEDIATE")
-        row = db.execute("SELECT value FROM sequence").fetchone()
-        value = max(previous, row[0] if row else 0) + 1
-        if row:
-            db.execute("UPDATE sequence SET value=?", (value,))
-        else:
-            db.execute("INSERT INTO sequence VALUES(?)", (value,))
-    return value
+    return create_execution_service(run).next_cell(previous)
 
 
 def artifact_hashes(run):
@@ -64,9 +52,7 @@ def record_cell(run: Path, record, source: Path, data_root: Path, before=None, *
         input_files=files,
         artifacts=artifacts,
     )
-    with sqlite3.connect(base / "ledger.sqlite") as db:
-        db.execute("CREATE TABLE IF NOT EXISTS cells(id TEXT PRIMARY KEY, doc TEXT NOT NULL)")
-        db.execute("INSERT INTO cells VALUES(?,?)", (identity, json.dumps(payload)))
+    create_execution_service(run).record(identity, payload)
     snapshot = base / identity / "artifacts"
     for name in artifacts:
         original = run / "workspace" / name
@@ -84,13 +70,10 @@ def artifact_proof(run, name, execution_ref=None):
 
         return CodeExperiments(PythonWorkspace(run)).proof(name, execution_ref)
 
-    path = run / ".execution/ledger.sqlite"
-    if not path.exists():
+    rows = create_execution_service(run).list()
+    if not rows:
         raise ValueError("Evidence has no trusted execution provenance")
-    with sqlite3.connect(path) as db:
-        rows = db.execute("SELECT id,doc FROM cells ORDER BY rowid DESC").fetchall()
-    for identity, body in rows:
-        doc = json.loads(body)
+    for identity, doc in rows:
         if execution_ref and identity != execution_ref:
             continue
         expected = doc["artifacts"].get(name)

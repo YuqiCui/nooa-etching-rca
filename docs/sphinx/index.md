@@ -56,6 +56,7 @@ simulation
 :caption: Agent与研究方法
 
 agents
+autoresearch-core
 execution-feedback
 code-buffers
 algorithms

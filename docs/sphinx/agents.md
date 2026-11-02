@@ -89,6 +89,37 @@ TokenBudgetSummarizer保留最近10条事件，目标摘要约8000字符。27200
 
 尚未将“每次改算必须列传感器全名、step、旧值、新值、修改原因、结论变化”全部变成硬字段。传感器与特征名目前可包含在报告和证据中，但详细程度存在模型自由度。此缺口在[文档自审](quality.md)列为后续工作，不能用prompt要求代替已实现schema。
 
+## Claude Code 对照实验
+
+可以将已有研究会话的公开输入复制到新目录，用 Claude Code 调用同一套数据和科学执行工具：
+
+```bash
+uv run python -m factor_demo.claude_experiment \
+  --baseline runs/original-session \
+  --run runs/claude-comparison \
+  --timeout 3600
+```
+
+需要预先安装支持 `--bare` 的 Claude Code。入口从原会话读取模型名称、任务和运行参数，从项目 `.env` 的 `FACTOR_API_BASE`、`FACTOR_API_KEY` 读取上游连接；endpoint 必须与原会话记录一致。它不会跟随 `.env` 当前的 `FACTOR_MODEL` 切换模型。历史会话未保存 key 指纹，因此只能保证复用当前指定凭据来源，不能追溯证明旧运行的密钥未变。
+
+本地 LiteLLM 转换层将 Claude Code 的 Anthropic Messages 请求送往原 OpenAI 兼容服务，固定模型、输出上限、thinking 和 reasoning effort。上游凭据只在宿主转换层使用，CLI 获得临时本地凭据，MCP 工具进程启动后清除凭据环境变量。Claude Code 只获得显式 MCP 业务工具；未开放其内置文件、终端、网络和子 agent 工具。科学计算仍使用原有 `PythonWorkspace` 隔离执行。
+
+每次只运行一个主 agent、一个并发模型请求，不启用额外模型审查；最多 64 轮、256 次模型请求、累计 400 万 token，token 预算在请求边界检查，单次请求可跨越累计上限。原会话的全部公开文件通过 SHA-256 核对，旧分析和隐藏真值不复制。先复现宿主数据预检，再用同一 Claude Code 配置执行独立最小模型探针，通过后才开始正式任务。
+
+新目录保存 `manifest.json`、`message.md`、`system-prompt.txt`、科学执行记录，以及 `probe/`、`formal/` 下的 `tool-calls.jsonl`、CLI 流、网关请求、上游 usage 和耗时。探针单独统计。最终回答保存在 `final-response.md`，分析产物位于 `workspace/artifacts/`。CLI 正常结束只表示模型交接完成，结果正确性还需核对实际表格、代码和证据。
+
+可在运行中或完成后重建对比统计：
+
+```bash
+uv run python -m factor_demo.claude_experiment.report \
+  --baseline runs/original-session \
+  --run runs/claude-comparison
+```
+
+统计保存在新目录的 `comparison.json`。NOOA 从原始 trace 读取完整响应 token，Claude Code 从上游 usage 读取；两边均排除宿主预检，Claude 另排除工具探针。输出 token 已包含思考 token，不能将两者再次相加。
+
+这是框架层对照：两套执行方式的系统提示、上下文管理、工具协议和最终交接不同，不能据此声称是严格的单变量模型能力评测。比较时分别报告任务完成、生成 token、重复代码、执行失败和产物一致性；网络等待时间和 API 故障另列。
+
 
 ## 专家公式研究工具
 

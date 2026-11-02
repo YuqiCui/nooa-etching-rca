@@ -6,11 +6,11 @@ from canonical predictions. Neither mode attests the semantics of arbitrary code
 
 import hashlib
 import json
-import sqlite3
 from pathlib import Path
 
 import polars as pl
 
+from .autoresearch_agent_v2.database import create_proof_service
 from .dataset_adapter import detect_schema, index_frame, read_table, safe_path
 from .datasets import DatasetSession, canonical, file_hash
 from .research_models import EvidenceRef, RawEvidenceSpec
@@ -82,12 +82,6 @@ def raw_value(root: Path, spec: RawEvidenceSpec):
     return getattr(series, spec.statistic)()
 
 
-def _base(run):
-    path = run / ".evidence"
-    path.mkdir(exist_ok=True)
-    return path
-
-
 def _publish(run, spec, actual, dataset_ref, source, mode):
     definition = {
         "spec": spec,
@@ -119,12 +113,7 @@ def _publish(run, spec, actual, dataset_ref, source, mode):
         proof_id=identity,
     )
     document = {**definition, "reference": reference.model_dump()}
-    with sqlite3.connect(_base(run) / "proofs.sqlite") as db:
-        db.execute("CREATE TABLE IF NOT EXISTS proofs(id TEXT PRIMARY KEY,doc TEXT NOT NULL)")
-        db.execute(
-            "INSERT OR REPLACE INTO proofs VALUES(?,?)",
-            (identity, json.dumps(document, allow_nan=False)),
-        )
+    create_proof_service(run).save(identity, document)
     return reference.model_dump()
 
 
@@ -221,14 +210,9 @@ def materialize_formula(run, lab, study_id, trial_id, metric, evidence_id, claim
 
 
 def verify_proof(run, evidence, session=None, lab=None):
-    path = _base(run) / "proofs.sqlite"
-    if not path.exists():
+    doc = create_proof_service(run).get(evidence.proof_id)
+    if doc is None:
         raise ValueError("Unknown trusted evidence proof")
-    with sqlite3.connect(path) as db:
-        row = db.execute("SELECT doc FROM proofs WHERE id=?", (evidence.proof_id,)).fetchone()
-    if row is None:
-        raise ValueError("Unknown trusted evidence proof")
-    doc = json.loads(row[0])
     expected = doc["reference"]
     for key in [
         "id",

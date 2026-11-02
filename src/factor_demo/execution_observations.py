@@ -1,39 +1,21 @@
 """Durable host observations shared by execution, correction and read-only reflection."""
 
 import json
-import sqlite3
 import time
 import uuid
-from contextlib import contextmanager
 from contextvars import ContextVar
+
+from .autoresearch_agent_v2.database import create_observation_service
 
 parent_execution = ContextVar("parent_execution", default=None)
 
 
 class ExecutionObservations:
     def __init__(self, run):
-        self.path = run / ".execution" / "observations.sqlite"
-
-    @contextmanager
-    def connect(self):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        db = sqlite3.connect(self.path)
-        db.execute("CREATE TABLE IF NOT EXISTS observations(id TEXT PRIMARY KEY, doc TEXT)")
-        db.execute(
-            "CREATE TABLE IF NOT EXISTS repairs(failure TEXT, verification TEXT, PRIMARY KEY(failure,verification))"
-        )
-        try:
-            with db:
-                yield db
-        finally:
-            db.close()
+        self._storage = create_observation_service(run)
 
     def save(self, doc):
-        with self.connect() as db:
-            db.execute(
-                "INSERT OR REPLACE INTO observations VALUES(?,?)",
-                (doc["observation_id"], json.dumps(doc)),
-            )
+        self._storage.save(doc["observation_id"], doc)
         return doc["observation_id"]
 
     def record(self, kind, status, **fields):
@@ -50,37 +32,13 @@ class ExecutionObservations:
         )
 
     def get(self, identity):
-        with self.connect() as db:
-            row = db.execute("SELECT doc FROM observations WHERE id=?", (identity,)).fetchone()
-        if not row:
+        doc = self._storage.get(identity)
+        if doc is None:
             raise ValueError("Unknown execution observation")
-        return json.loads(row[0])
+        return doc
 
     def resolve(self, failure, verification):
-        original, checked = self.get(failure), self.get(verification)
-        if (
-            original["status"] != "failed"
-            or checked["status"] != "passed"
-            or checked.get("repairs") != failure
-        ):
-            raise ValueError(
-                "Repair requires a failed observation and its passed original-path verification"
-            )
-        with self.connect() as db:
-            db.execute("INSERT OR IGNORE INTO repairs VALUES(?,?)", (failure, verification))
-            rows = [json.loads(r[0]) for r in db.execute("SELECT doc FROM observations")]
-            parents = {failure}
-            for _ in range(len(rows)):
-                children = {r["observation_id"] for r in rows if r.get("parent_id") in parents}
-                if children <= parents:
-                    break
-                parents |= children
-            for child in rows:
-                if child["observation_id"] in parents and child["status"] == "failed":
-                    db.execute(
-                        "INSERT OR IGNORE INTO repairs VALUES(?,?)",
-                        (child["observation_id"], verification),
-                    )
+        self._storage.resolve(failure, verification)
 
     def read(self, identity, offset=0, limit=12000):
         text = json.dumps(self.get(identity), ensure_ascii=False, indent=2)
@@ -92,14 +50,13 @@ class ExecutionObservations:
         }
 
     def context(self):
-        if not self.path.exists():
+        rows = [(doc["observation_id"], doc) for doc in self._storage.list()]
+        if not rows:
             return {"recent": [], "unresolved_failures": []}
-        with self.connect() as db:
-            rows = db.execute("SELECT id,doc FROM observations ORDER BY rowid DESC").fetchall()
-            resolved = {r[0] for r in db.execute("SELECT failure FROM repairs")}
+        resolved = self._storage.resolved_failures()
 
         def compact(body):
-            doc = json.loads(body)
+            doc = body
             result = {
                 k: doc[k]
                 for k in (
@@ -133,8 +90,8 @@ class ExecutionObservations:
         failed = [
             (key, body)
             for key, body in rows
-            if json.loads(body)["status"] == "failed"
-            and json.loads(body)["kind"] != "orchestration"
+            if body["status"] == "failed"
+            and body["kind"] != "orchestration"
             and key not in resolved
         ]
         return {

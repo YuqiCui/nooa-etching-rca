@@ -336,12 +336,10 @@ class PythonWorkspace:
     def execution_context(self):
         from .code_experiments import CodeExperiments
 
-        experiments = []
-        if (self.run / ".execution/experiments.sqlite").exists():
-            experiments = [
-                {k: doc[k] for k in ("experiment_id", "status", "validity", "published")}
-                for doc in CodeExperiments(self).catalog()
-            ]
+        experiments = [
+            {k: doc[k] for k in ("experiment_id", "status", "validity", "published")}
+            for doc in CodeExperiments(self).catalog()
+        ]
         return {
             "execution_evidence": self.observations.context(),
             "code_experiments": experiments,
@@ -363,17 +361,10 @@ class PythonWorkspace:
         )
 
     def list_executions(self, offset=0, limit=20):
-        import sqlite3
+        from .autoresearch_agent_v2.database import create_execution_service
 
-        path = self.run / ".execution/ledger.sqlite"
-        if not path.exists():
-            return []
-        with sqlite3.connect(path) as db:
-            rows = db.execute(
-                "SELECT id,doc FROM cells ORDER BY rowid DESC LIMIT ? OFFSET ?",
-                (min(100, max(1, limit)), max(0, offset)),
-            ).fetchall()
-        return [{"execution_ref": key, **json.loads(doc)} for key, doc in rows]
+        rows = create_execution_service(self.run).list(min(100, max(1, limit)), max(0, offset))
+        return [{"execution_ref": key, **doc} for key, doc in rows]
 
     def read_execution(self, execution_ref, offset=0, limit=12000):
         import re

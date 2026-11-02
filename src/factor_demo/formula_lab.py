@@ -139,11 +139,11 @@ class FormulaLab:
     def transaction(self, write=True):
         return self.store.transaction(write)
 
-    def get(self, identity, db=None):
-        return self.store.get(identity, db)
+    def get(self, identity, transaction=None):
+        return self.store.get(identity, transaction)
 
-    def save(self, db, study):
-        self.store.save(db, study)
+    def save(self, transaction, study):
+        self.store.save(transaction, study)
 
     def emit(self, kind, study_id, **data):
         if self.events:
@@ -298,8 +298,8 @@ class FormulaLab:
             "selection_id": None,
             "limits": LIMITS,
         }
-        with self.transaction() as db:
-            self.save(db, study)
+        with self.transaction() as transaction:
+            self.save(transaction, study)
         self._active_studies.add(identity)
         self.export(study)
         self.emit("study.created", identity, title=spec.title)
@@ -320,8 +320,8 @@ class FormulaLab:
 
         FeatureExecutor(self).validate(study, spec.model_dump())
         json.dumps(spec.params, allow_nan=False)
-        with self.transaction() as db:
-            study = self.get(identity, db)
+        with self.transaction() as transaction:
+            study = self.get(identity, transaction)
             version = 1 + max(
                 (f["version"] for f in study["formulas"] if f["name"] == spec.name), default=0
             )
@@ -350,7 +350,7 @@ class FormulaLab:
             study["selection_id"] = None
             if self.owner not in study["plan"]["participants"]:
                 study["plan"]["participants"].append(self.owner)
-            self.save(db, study)
+            self.save(transaction, study)
         self._active_studies.add(identity)
         self.export(study)
         self.emit("formula.registered", identity, ref=ref)
@@ -358,8 +358,8 @@ class FormulaLab:
 
     def feature_set(self, identity, refs):
         refs = sorted(set(refs))
-        with self.transaction() as db:
-            study = self.get(identity, db)
+        with self.transaction() as transaction:
+            study = self.get(identity, transaction)
             if not refs or set(refs) - {f["ref"] for f in study["formulas"]}:
                 raise ValueError("Choose registered formula versions")
             existing = next((s for s in study["sets"] if s["formulas"] == refs), None)
@@ -369,7 +369,7 @@ class FormulaLab:
             study["sets"].append(item)
             study["revision"] += 1
             study["selection_id"] = None
-            self.save(db, study)
+            self.save(transaction, study)
         self._active_studies.add(identity)
         self.emit("set.created", identity, set_id=item["id"])
         return item
@@ -377,13 +377,13 @@ class FormulaLab:
     def retire(self, identity, set_id, reason):
         if not reason.strip():
             raise ValueError("Excluding a comparison requires an explicit reason")
-        with self.transaction() as db:
-            study = self.get(identity, db)
+        with self.transaction() as transaction:
+            study = self.get(identity, transaction)
             item = next(s for s in study["sets"] if s["id"] == set_id)
             item["excluded"] = {"reason": reason, "owner": self.owner, "time": time.time()}
             study["selection_id"] = None
             study["revision"] += 1
-            self.save(db, study)
+            self.save(transaction, study)
         self._active_studies.add(identity)
         self.export(study)
         self.emit("set.excluded", identity, set_id=set_id, reason=reason)
@@ -464,12 +464,12 @@ class FormulaLab:
         }
 
     def update_trial(self, identity, trial_id, **updates):
-        with self.transaction() as db:
-            study = self.get(identity, db)
+        with self.transaction() as transaction:
+            study = self.get(identity, transaction)
             row = next(t for t in study["trials"] if t["id"] == trial_id)
             row.update(updates)
             study["selection_id"] = None
-            self.save(db, study)
+            self.save(transaction, study)
         self.emit("trial.updated", identity, trial_id=trial_id, status=row["status"])
 
     async def evaluate(self, identity, refs):
@@ -482,8 +482,8 @@ class FormulaLab:
                 "This set was explicitly excluded; create a new formula version to reconsider"
             )
         # Claim the entire feature set before any await. Another process cannot duplicate it.
-        with self.transaction() as db:
-            study = self.get(identity, db)
+        with self.transaction() as transaction:
+            study = self.get(identity, transaction)
             previous = [t for t in study["trials"] if t["set_id"] == item["id"]]
             for row in previous:
                 if row["status"] == "running":
@@ -517,7 +517,7 @@ class FormulaLab:
             ]
             study["trials"].extend(new)
             study["selection_id"] = None
-            self.save(db, study)
+            self.save(transaction, study)
         self.emit("evaluation.start", identity, set_id=item["id"])
         try:
             matrix = await self.matrix(study, item)
@@ -668,10 +668,10 @@ class FormulaLab:
             raise
         finally:
             attempt["finished"] = time.time()
-            with self.transaction() as db:
-                current = self.get(identity, db)
+            with self.transaction() as transaction:
+                current = self.get(identity, transaction)
                 current["replays"].append(attempt)
-                self.save(db, current)
+                self.save(transaction, current)
             self.export(current)
             self.emit("replay.finished", identity, status=attempt["status"])
 
@@ -709,13 +709,13 @@ class FormulaLab:
             },
             "created": time.time(),
         }
-        with self.transaction() as db:
-            current = self.get(identity, db)
+        with self.transaction() as transaction:
+            current = self.get(identity, transaction)
             if current["revision"] != study["revision"] or current["trials"] != study["trials"]:
                 raise ValueError("Study changed during replay; freeze again")
             current["selections"].append(selection)
             current["selection_id"] = selection["id"]
-            self.save(db, current)
+            self.save(transaction, current)
         self.export(current)
         self.emit("selection.frozen", identity, selection_id=selection["id"], winner=best["id"])
         return {

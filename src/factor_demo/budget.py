@@ -3,10 +3,6 @@
 from __future__ import annotations
 
 import json
-import sqlite3
-import time
-import uuid
-from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import asdict
 from pathlib import Path
@@ -18,10 +14,7 @@ from nooa.unifiedllm import (
     BrokerAdmissionConfig,
 )
 
-
-class BudgetExceeded(RuntimeError):
-    pass
-
+from .autoresearch_agent_v2.database import BudgetExceeded, create_budget_service
 
 _attempts = ContextVar("research_provider_attempts", default=None)
 
@@ -50,97 +43,27 @@ class TokenLedger:
         self.root = root
         self.mission = mission
         self.limit = limit
-        self.path = root / "budget.sqlite"
-        with self.connect() as db:
-            db.executescript("""CREATE TABLE IF NOT EXISTS tokens(
-             id TEXT PRIMARY KEY,mission TEXT,agent TEXT,purpose TEXT,reserved INTEGER,charged INTEGER DEFAULT 0,
-             state TEXT,usage TEXT,created REAL);""")
-
-    @contextmanager
-    def connect(self):
-        db = sqlite3.connect(self.path, timeout=10)
-        db.execute("PRAGMA journal_mode=WAL")
-        try:
-            with db:
-                yield db
-        finally:
-            db.close()
+        self._storage = create_budget_service(root, mission, limit)
 
     def reserve(self, amount, agent, purpose):
-        key = uuid.uuid4().hex
-        with self.connect() as db:
-            db.execute("BEGIN IMMEDIATE")
-            used = db.execute(
-                "SELECT COALESCE(SUM(CASE WHEN state='reserved' THEN reserved ELSE charged END),0) FROM tokens WHERE mission=?",
-                (self.mission,),
-            ).fetchone()[0]
-            if used + amount > self.limit:
-                raise BudgetExceeded(
-                    "Shared token budget exhausted (including in-flight reservations)"
-                )
-            db.execute(
-                "INSERT INTO tokens(id,mission,agent,purpose,reserved,state,created) VALUES(?,?,?,?,?,?,?)",
-                (key, self.mission, agent, purpose, amount, "reserved", time.time()),
-            )
-        return key
+        return self._storage.reserve(amount, agent, purpose)
 
     def settle(self, key, usage=None, dispatched=True, unreported_retry_tokens=0):
-        with self.connect() as db:
-            row = db.execute("SELECT reserved FROM tokens WHERE id=?", (key,)).fetchone()
-            # Unknown/failed usage consumes the reservation rather than silently becoming zero.
-            charged = (
-                (usage.total_tokens or usage.input_tokens + usage.output_tokens)
-                if usage is not None
-                else row[0]
-                if dispatched
-                else 0
-            )
-            db.execute(
-                "UPDATE tokens SET state=?,charged=?,usage=? WHERE id=?",
-                (
-                    "reported_plus_estimate"
-                    if usage is not None and unreported_retry_tokens
-                    else "reported"
-                    if usage is not None
-                    else "estimated"
-                    if dispatched
-                    else "not_dispatched",
-                    charged + unreported_retry_tokens,
-                    json.dumps(
-                        {
-                            "reported": usage.model_dump() if usage is not None else None,
-                            "unreported_retry_tokens": unreported_retry_tokens,
-                        }
-                    ),
-                    key,
-                ),
-            )
+        self._storage.settle(
+            key,
+            (usage.total_tokens or usage.input_tokens + usage.output_tokens)
+            if usage is not None
+            else None,
+            usage.model_dump() if usage is not None else None,
+            dispatched,
+            unreported_retry_tokens,
+        )
 
     def abandon_agent(self, agent):
-        with self.connect() as db:
-            db.execute(
-                "UPDATE tokens SET state='estimated',charged=reserved WHERE mission=? AND agent=? AND state='reserved'",
-                (self.mission, agent),
-            )
+        self._storage.abandon_agent(agent)
 
     def snapshot(self):
-        with self.connect() as db:
-            rows = db.execute(
-                "SELECT state,COALESCE(SUM(reserved),0),COALESCE(SUM(charged),0),COUNT(*) FROM tokens WHERE mission=? GROUP BY state",
-                (self.mission,),
-            ).fetchall()
-        charged = sum(r[2] for r in rows)
-        held = sum(r[1] for r in rows if r[0] == "reserved")
-        return {
-            "token_limit": self.limit,
-            "charged_tokens": charged,
-            "reserved_tokens": held,
-            "available_tokens": max(0, self.limit - charged - held),
-            "logical_calls": sum(r[3] for r in rows),
-            "estimated_calls": sum(
-                r[3] for r in rows if r[0] in {"estimated", "reported_plus_estimate"}
-            ),
-        }
+        return self._storage.snapshot()
 
 
 class BudgetedClient(AdmissionControl):

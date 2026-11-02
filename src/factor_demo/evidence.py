@@ -8,6 +8,7 @@ from pathlib import Path
 import polars as pl
 from nooa.strategy_validation import InvariantError
 
+from .autoresearch_agent_v2.database import create_dataset_service
 from .live_events import public_artifact_path as artifact_path
 from .research_models import ResearchReply
 
@@ -30,7 +31,7 @@ class EvidenceVerifier:
             else self.run
         )
         self.root = root
-        if (root / ".datasets/registry.sqlite").exists():
+        if create_dataset_service(root).is_initialized():
             from .datasets import DatasetRegistry
 
             self.registry = DatasetRegistry(root)
@@ -86,7 +87,7 @@ class EvidenceVerifier:
         return runs
 
     def verify(self, report: ResearchReply):
-        if self.registry is None and (self.root / ".datasets/registry.sqlite").exists():
+        if self.registry is None and create_dataset_service(self.root).is_initialized():
             return EvidenceVerifier(
                 self.run, self.events, report.dataset_ref or self.dataset_ref
             ).verify(report)

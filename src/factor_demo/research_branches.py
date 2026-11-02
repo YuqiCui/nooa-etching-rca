@@ -7,16 +7,15 @@ import contextlib
 import hashlib
 import json
 import shutil
-import sqlite3
 import sys
 import time
 import uuid
-from contextlib import contextmanager
 from pathlib import Path
 
 import psutil
 from nooa import QueueManager
 
+from .autoresearch_agent_v2.database import create_branch_service
 from .io_utils import write_json
 from .live_events import LiveEvents, artifact_index, branch_path, public_artifact_path
 
@@ -26,64 +25,19 @@ TERMINAL = {"completed", "cancelled", "failed", "interrupted"}
 class BranchStore:
     def __init__(self, root: Path):
         self.root = root.resolve()
-        self.path = self.root / "branches.sqlite"
-        with self.connect() as db:
-            db.execute("""CREATE TABLE IF NOT EXISTS branches(
-             id TEXT PRIMARY KEY,parent_id TEXT,mission TEXT,title TEXT,task TEXT,state TEXT,
-             created REAL,updated REAL,pid INTEGER,process_created REAL,review_status TEXT,error TEXT)""")
-
-    @contextmanager
-    def connect(self):
-        db = sqlite3.connect(self.path, timeout=10)
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA journal_mode=WAL")
-        try:
-            with db:
-                yield db
-        finally:
-            db.close()
+        self._storage = create_branch_service(self.root)
 
     def list(self):
-        with self.connect() as db:
-            return [dict(r) for r in db.execute("SELECT * FROM branches ORDER BY created")]
+        return self._storage.list()
 
     def get(self, identity):
-        with self.connect() as db:
-            row = db.execute("SELECT * FROM branches WHERE id=?", (identity,)).fetchone()
-        if row is None:
-            raise ValueError("Unknown research branch")
-        return dict(row)
+        return self._storage.get(identity)
 
     def create(self, identity, parent, mission, title, task):
-        with self.connect() as db:
-            db.execute(
-                "INSERT INTO branches VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    identity,
-                    parent,
-                    mission,
-                    title,
-                    task,
-                    "queued",
-                    time.time(),
-                    time.time(),
-                    None,
-                    None,
-                    None,
-                    None,
-                ),
-            )
+        self._storage.create(identity, parent, mission, title, task)
 
     def update(self, identity, **values):
-        allowed = {"mission", "state", "pid", "process_created", "review_status", "error"}
-        if set(values) - allowed:
-            raise ValueError("Invalid branch update")
-        values["updated"] = time.time()
-        with self.connect() as db:
-            db.execute(
-                "UPDATE branches SET " + ",".join(f"{key}=?" for key in values) + " WHERE id=?",
-                (*values.values(), identity),
-            )
+        self._storage.update(identity, values)
 
     def process(self, row):
         if not row.get("pid"):
@@ -453,12 +407,7 @@ class ResearchManager:
         return value
 
     def progress(self, identity):
-        with sqlite3.connect(self.root / "ui.sqlite") as db:
-            row = db.execute(
-                "SELECT COALESCE(MAX(id),0),COALESCE(MAX(created),0) FROM events WHERE agent_id=? AND task_id=? AND type IN ('model.reasoning.delta','model.content.delta','tool.output','tool.end','turn.checkpoint')",
-                (identity, self.mission),
-            ).fetchone()
-        return row
+        return self.events.progress(identity, self.mission)
 
     async def wait(self, identities=None, timeout_s=30):
         identities = identities or list(self.handles)

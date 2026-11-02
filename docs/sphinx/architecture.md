@@ -64,3 +64,66 @@ NOOA提供CodeActV2、Predict/Reflexion、Context/TextSkill、SQLiteStorageManag
 ## 审核后的执行与交付路径
 
 可信主进程仅持有NOOA编排、模型客户端、预算和明确工具实现。模型生成的外层CodeAct经JSON代理进入本次生成调用的无凭据长驻进程；科学Python进入当前研究轮的另一个长驻内核，脚本和独立实验例外。二者均不继承live agent。宿主核对完成协议、实际退出状态、来源账本和父子观察，不能仅因进程持续或返回零就证明科学正确。只读Predict reviewer可使用另一已配置模型，全部请求仍受同一预算约束。最终Markdown由核验结果确定性渲染与推送。留出test/仿真参考仅由单独收尾入口评分。细节与测试映射见[审核问题修复](audit-remediation.md)。
+
+## 持久化服务与表结构
+
+项目自有的持久化实现集中在 `autoresearch_agent_v2/database/`，复用 SQLAlchemy 2.0 Core。
+数据文件仍按根会话和各研究方向分开，不合并数据库、不改名、不搬动已有记录。
+
+| 部分 | 位置 | 职责 |
+|---|---|---|
+| 表注册 | `tables.py`、`constants.py` | 用 SQLAlchemy `Table` 和 `MetaData` 声明表、列、主键、默认值及文件分组；导入时不打开数据库 |
+| SQLite 实现 | `sqlite/` | 管理连接、短事务、WAL、增量补列及固定业务查询；封装 JSON 编解码 |
+| 服务接口 | `services.py`、包入口 | 声明业务方法并创建服务；参数和结果只有业务标识、普通文档与计数 |
+
+上层通过 `create_event_service(root)`、`create_dataset_service(root)` 等入口获取服务，
+不导入 SQLite 实现、表对象或 SQLAlchemy，不访问连接，也不提供 SQL 或查询表达式。
+`LiveEvents` 已移除公开的 `db`；Web 请求去重、进度水位和审查事件均调用明确的服务方法。
+代码版本、数据集发布、公式研究的事务上下文交付受当前事务约束的业务服务，
+上层通过其 `get`、`save`、`publish` 等方法完成复合操作，不能透传 SQL。
+业务异常保留原有语义；数据库驱动异常统一包装为 `StorageError`。
+
+### 原有表与业务归属
+
+下列为本项目拥有的 10 个文件、17 张表。`TEXT` 中的 `doc`、`body`、`data` 等字段继续保存
+原有 JSON 文本，不把历史文档迁移成新模型。除表中写明的复合键外，`id`、`owner`、`key`
+或 `request_id` 为相应表的主键。原设计没有数据库级外键，跨文件的身份与来源检查仍由业务层负责。
+
+| 文件（相对会话目录） | 表 | 列与业务 |
+|---|---|---|
+| 根 `ui.sqlite` | `events` | `id INTEGER` 自增；`task_id/type/data TEXT`、`created REAL`、`agent_id/parent_agent_id TEXT`；供 SSE 回放、方向进度和反思审查 |
+| 根 `ui.sqlite` | `inbox` | `id INTEGER` 自增；`task_id/message TEXT`、`consumed INTEGER` 默认 0、`agent_id/source TEXT`；按任务及方向消费指导 |
+| 根 `ui.sqlite` | `requests` | `request_id/task_id TEXT`；将重试请求绑定到首次登记的任务 |
+| 根 `.datasets/registry.sqlite` | `datasets` | `id/doc TEXT`、`created REAL`；不可变版本文档、内容身份、版本族及血缘 |
+| 根 `.datasets/registry.sqlite` | `scopes` | `owner/root_id/current_id/stack TEXT`；方向独立的初始版本、当前版本和选择栈 |
+| 根 `.datasets/registry.sqlite` | `meta` | `key/value TEXT`；记录会话初始数据集 |
+| 根 `.datasets/registry.sqlite` | `acquisition` | `owner/request_id/request/result TEXT`，复合主键 `(owner, request_id)`；保存采集参数和结果，隔离方向内的请求身份 |
+| `.formula-lab/registry.sqlite` | `studies` | `id/body TEXT`；公式协议、源码版本、试验、选优和重放历史 |
+| 根 `branches.sqlite` | `branches` | `id/parent_id/mission/title/task/state TEXT`，`created/updated REAL`，`pid INTEGER`，`process_created REAL`，`review_status/error TEXT`；方向身份和生命周期 |
+| 根 `budget.sqlite` | `tokens` | `id/mission/agent/purpose TEXT`，`reserved/charged INTEGER`，`state/usage TEXT`，`created REAL`；共享预算预留及结算 |
+| `.execution/code.sqlite` | `versions` | `name TEXT`、`revision INTEGER`、`source/sha256 TEXT`，复合主键 `(name, revision)`；只追加源码版本 |
+| `.execution/ledger.sqlite` | `sequence` | `value INTEGER NOT NULL`，沿用原来的单行无主键结构；分配执行编号 |
+| `.execution/ledger.sqlite` | `cells` | `id/doc TEXT`；只追加输入、源码和产物哈希对应的可信执行文档 |
+| `.execution/experiments.sqlite` | `experiments` | `id/doc TEXT`；实验冻结输入、依赖、检查和发布 manifest |
+| `.execution/observations.sqlite` | `observations` | `id/doc TEXT`；宿主记录的执行观察、父子关系和检查结果 |
+| `.execution/observations.sqlite` | `repairs` | `failure/verification TEXT`，复合主键 `(failure, verification)`；失败观察与原路径复验关系 |
+| `.evidence/proofs.sqlite` | `proofs` | `id/doc TEXT`；可重算证据及其输入、结果和引用绑定 |
+
+`conversation.sqlite` 由 NOOA 的 `SQLiteStorageManager` 创建和管理，不纳入这 17 张自有表。
+审计服务使用只读连接读取 NOOA 的事件计数、Summary 和活跃标签；不会创建缺失文件或迁移第三方表。
+
+### 事务与旧库兼容
+
+所有写事务在读取共享状态前取得 `BEGIN IMMEDIATE` 写锁，异常时回滚并关闭连接。
+预算检查与预留、代码版本冲突检查与追加、执行编号分配、指导消息消费、请求身份登记，
+分别在单个事务内完成。数据集版本号与发布文档在同一业务事务中写入；文件发布仍遵循
+原有内容寻址流程，不承诺数据库与文件系统之间的原子提交。
+
+表注册使用 `MetaData.create_all()` 创建缺失表。旧 UI 库缺少的 `agent_id`、
+`parent_agent_id` 和 `source` 在写锁保护下增量补齐，旧记录分别使用 `main`、空父方向及 `user` 默认值。
+已有记录、执行编号和代码 revision 保留。首次打开新文件时并发切换 WAL 的锁冲突只在连接配置阶段
+有限等待重试，不自动重放业务事务。
+
+`tests/test_database_services.py` 验证旧库读取与补列、回滚、方向隔离、只追加记录、只读审计，
+并使用独立进程竞争预算、代码版本、指导消息、请求身份和执行编号。
+同一测试文件检查应用层不导入数据库内部实现、不嵌入 SQL，防止新增调用绕过服务接口。

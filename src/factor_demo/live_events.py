@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-import json
 import mimetypes
 import re
-import sqlite3
 import threading
-import time
 from pathlib import Path
 from urllib.parse import quote
 
 import polars as pl
+
+from .autoresearch_agent_v2.database import create_event_service
 
 
 class LiveEvents:
@@ -31,83 +30,69 @@ class LiveEvents:
         self.task_id = task_id
         self.closed = False
         self.lock = threading.RLock()
-        self.db = sqlite3.connect(self.root / "ui.sqlite", check_same_thread=False)
-        self.db.execute("PRAGMA journal_mode=WAL")
-        self.db.execute("PRAGMA busy_timeout=5000")
-        self.db.executescript("""
-            CREATE TABLE IF NOT EXISTS events(
-                id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL,
-                type TEXT NOT NULL, data TEXT NOT NULL, created REAL NOT NULL);
-            CREATE TABLE IF NOT EXISTS inbox(
-                id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL,
-                message TEXT NOT NULL, consumed INTEGER DEFAULT 0);
-            CREATE TABLE IF NOT EXISTS requests(request_id TEXT PRIMARY KEY, task_id TEXT NOT NULL);
-        """)
-        # Serialize additive migration when HTTP replay and new branch hosts connect together.
-        with self.db:
-            self.db.execute("BEGIN IMMEDIATE")
-            for table, column, definition in [
-                ("events", "agent_id", "TEXT NOT NULL DEFAULT 'main'"),
-                ("events", "parent_agent_id", "TEXT NOT NULL DEFAULT ''"),
-                ("inbox", "agent_id", "TEXT NOT NULL DEFAULT 'main'"),
-                ("inbox", "source", "TEXT NOT NULL DEFAULT 'user'"),
-            ]:
-                if column not in {row[1] for row in self.db.execute(f"PRAGMA table_info({table})")}:
-                    self.db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+        self._storage = create_event_service(self.root)
 
     def emit(self, kind: str, **data) -> int:
         with self.lock:
             if self.closed:
                 return 0
-            with self.db:
-                row = self.db.execute(
-                    "INSERT INTO events(task_id,type,data,created,agent_id,parent_agent_id) VALUES(?,?,?,?,?,?)",
-                    (
-                        self.task_id,
-                        kind,
-                        json.dumps(data, ensure_ascii=False),
-                        time.time(),
-                        self.agent_id,
-                        self.parent_agent_id,
-                    ),
-                )
-                return row.lastrowid
+            return self._storage.emit(self.task_id, kind, data, self.agent_id, self.parent_agent_id)
 
     def since(self, after: int, limit: int = 256) -> list[dict]:
         with self.lock:
-            rows = self.db.execute(
-                "SELECT id,task_id,type,data,created,agent_id,parent_agent_id FROM events WHERE id>? ORDER BY id LIMIT ?",
-                (after, limit),
-            ).fetchall()
-        return [
-            {
-                "id": i,
-                "task_id": t,
-                "type": k,
-                "data": json.loads(d),
-                "time": s,
-                "agent_id": agent,
-                "parent_agent_id": parent,
-            }
-            for i, t, k, d, s, agent, parent in rows
-        ]
+            return self._storage.since(after, limit)
+
+    def latest_id(self) -> int:
+        """返回当前会话的事件水位。"""
+        with self.lock:
+            return self._storage.latest_id()
+
+    def request_task(self, request_id: str) -> str | None:
+        """返回请求已绑定的任务。
+
+        Args:
+            request_id: 客户端幂等请求标识。
+
+        Returns:
+            已登记的任务标识；未知请求为 None。
+        """
+        return self._storage.request_task(request_id)
+
+    def claim_request(self, request_id: str, task_id: str) -> tuple[str, bool]:
+        """原子登记请求并返回任务及首次登记标记。
+
+        Args:
+            request_id: 客户端幂等请求标识。
+            task_id: 首次登记时绑定的任务。
+
+        Returns:
+            实际绑定的任务和首次登记标记。
+        """
+        return self._storage.claim_request(request_id, task_id)
+
+    def reflection_events(self) -> list[dict]:
+        """读取当前方向最近的反思事件。"""
+        return self._storage.reflection_events(self.agent_id)
+
+    def progress(self, agent_id: str, task_id: str) -> tuple[int, float]:
+        """读取指定任务方向的进度水位。
+
+        Args:
+            agent_id: 目标方向。
+            task_id: 所属任务。
+
+        Returns:
+            最新进度事件编号和 Unix 秒时间。
+        """
+        return self._storage.progress(agent_id, task_id)
 
     def add_guidance(self, message: str, source: str = "user"):
-        with self.lock, self.db:
-            self.db.execute(
-                "INSERT INTO inbox(task_id,message,agent_id,source) VALUES(?,?,?,?)",
-                (self.task_id, message, self.agent_id, source),
-            )
+        with self.lock:
+            self._storage.add_guidance(self.task_id, self.agent_id, message, source)
 
     def take_guidance_records(self) -> list[dict]:
-        with self.lock, self.db:
-            self.db.execute("BEGIN IMMEDIATE")
-            rows = self.db.execute(
-                "SELECT id,message,source FROM inbox WHERE task_id=? AND agent_id=? AND consumed=0 ORDER BY id",
-                (self.task_id, self.agent_id),
-            ).fetchall()
-            self.db.executemany("UPDATE inbox SET consumed=1 WHERE id=?", [(r[0],) for r in rows])
-        return [{"message": r[1], "source": r[2]} for r in rows]
+        with self.lock:
+            return self._storage.take_guidance(self.task_id, self.agent_id)
 
     def take_guidance(self) -> list[str]:
         return [r["message"] for r in self.take_guidance_records()]
@@ -116,7 +101,7 @@ class LiveEvents:
         with self.lock:
             if not self.closed:
                 self.closed = True
-                self.db.close()
+                self._storage.close()
 
 
 def artifact_root(run: Path) -> Path:

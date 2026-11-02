@@ -4,10 +4,9 @@ import asyncio
 import hashlib
 import json
 import shutil
-import sqlite3
 import uuid
-from contextlib import contextmanager
 
+from .autoresearch_agent_v2.database import create_experiment_service
 from .code_buffers import CodeBuffers
 from .datasets import file_hash
 from .path_guard import copy_regular_nofollow
@@ -30,32 +29,15 @@ class CodeExperiments:
         self.workspace = workspace
         self.run = workspace.run
         self.base = self.run / ".execution" / "experiments"
-        self.db_path = self.run / ".execution" / "experiments.sqlite"
-
-    @contextmanager
-    def connect(self):
-        self.base.mkdir(parents=True, exist_ok=True)
-        db = sqlite3.connect(self.db_path)
-        db.execute("CREATE TABLE IF NOT EXISTS experiments(id TEXT PRIMARY KEY, doc TEXT)")
-        try:
-            with db:
-                yield db
-        finally:
-            db.close()
+        self._storage = create_experiment_service(self.run)
 
     def save(self, doc):
-        with self.connect() as db:
-            db.execute(
-                "INSERT OR REPLACE INTO experiments VALUES(?,?)",
-                (doc["experiment_id"], json.dumps(doc)),
-            )
+        self._storage.save(doc["experiment_id"], doc)
 
     def get(self, identity):
-        with self.connect() as db:
-            row = db.execute("SELECT doc FROM experiments WHERE id=?", (identity,)).fetchone()
-        if row is None:
+        doc = self._storage.get(identity)
+        if doc is None:
             raise ValueError("Unknown experiment")
-        doc = json.loads(row[0])
         store = CodeBuffers(self.run)
         stale = any(
             store.get(src["name"])["sha256"] != src["sha256"]
@@ -78,14 +60,7 @@ class CodeExperiments:
         return doc
 
     def catalog(self, limit=20):
-        with self.connect() as db:
-            ids = [
-                r[0]
-                for r in db.execute(
-                    "SELECT id FROM experiments ORDER BY rowid DESC LIMIT ?", (limit,)
-                )
-            ]
-        return [self.get(identity) for identity in ids]
+        return [self.get(doc["experiment_id"]) for doc in self._storage.list(limit)]
 
     async def execute(self, name, revision, dependencies, parameters, checks, timeout_s):
         from .research_workspace import PythonWorkspace

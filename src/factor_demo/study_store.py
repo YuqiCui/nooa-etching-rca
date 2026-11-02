@@ -1,10 +1,9 @@
-"""Short SQLite transactions for durable formula protocols and attempt history."""
+"""通过业务服务保存公式协议与试验历史。"""
 
-import json
 import re
-import sqlite3
-from contextlib import contextmanager
 from pathlib import Path
+
+from .autoresearch_agent_v2.database import create_study_service
 
 
 def public_study(study):
@@ -31,61 +30,28 @@ def public_study(study):
 
 class StudyStore:
     def __init__(self, base: Path):
-        self.base = base
+        self._storage = create_study_service(base)
 
-    @contextmanager
     def transaction(self, write=True):
-        self.base.mkdir(parents=True, exist_ok=True)
-        db = sqlite3.connect(self.base / "registry.sqlite", timeout=30)
-        try:
-            db.execute("CREATE TABLE IF NOT EXISTS studies(id TEXT PRIMARY KEY,body TEXT NOT NULL)")
-            if write:
-                db.execute("BEGIN IMMEDIATE")
-            yield db
-            db.commit()
-        except BaseException:
-            db.rollback()
-            raise
-        finally:
-            db.close()
+        return self._storage.transaction(write)
 
-    def get(self, identity, db=None):
+    def get(self, identity, transaction=None):
         if not re.fullmatch(r"study-[a-f0-9]{12}", identity):
             raise ValueError("Invalid study id")
-        if db is None:
-            with self.transaction(write=False) as connection:
-                return self.get(identity, connection)
-        row = db.execute("SELECT body FROM studies WHERE id=?", (identity,)).fetchone()
-        if not row:
+        study = (transaction or self._storage).get(identity)
+        if study is None:
             raise ValueError("Unknown formula study")
-        study = json.loads(row[0])
         study.setdefault("replays", [])
         return study
 
-    def save(self, db, study):
-        db.execute(
-            "INSERT OR REPLACE INTO studies VALUES(?,?)",
-            (study["id"], json.dumps(study, allow_nan=False)),
-        )
+    def save(self, transaction, study):
+        transaction.save(study["id"], study)
 
     def list(self):
-        if not (self.base / "registry.sqlite").exists():
-            return []
-        with self.transaction(write=False) as db:
-            return [
-                json.loads(row[0]) for row in db.execute("SELECT body FROM studies ORDER BY id")
-            ]
+        return self._storage.list_by_id()
 
     def catalog(self):
         return [public_study(study) for study in self.list()]
 
     def recent(self, limit=5):
-        if not (self.base / "registry.sqlite").exists():
-            return []
-        with self.transaction(write=False) as db:
-            return [
-                json.loads(row[0])
-                for row in db.execute(
-                    "SELECT body FROM studies ORDER BY rowid DESC LIMIT ?", (limit,)
-                )
-            ]
+        return self._storage.list(limit)

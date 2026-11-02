@@ -266,7 +266,7 @@ def create_app(project: Path | None = None) -> FastAPI:
                         }
                     )
         events = LiveEvents(run)
-        last_id = events.db.execute("SELECT COALESCE(MAX(id),0) FROM events").fetchone()[0]
+        last_id = events.latest_id()
         events.close()
         from .dataset_api import dataset_state
 
@@ -448,11 +448,9 @@ def create_app(project: Path | None = None) -> FastAPI:
             events = LiveEvents(run, body.request_id)
             try:
                 # Durable request ID prevents reconnect/retry from launching the same work twice.
-                old = events.db.execute(
-                    "SELECT task_id FROM requests WHERE request_id=?", (body.request_id,)
-                ).fetchone()
-                if old:
-                    return {"task_id": old[0], "duplicate": True}
+                old = events.request_task(body.request_id)
+                if old is not None:
+                    return {"task_id": old, "duplicate": True}
                 job = jobs.get(name)
                 if not job and case_running(run):
                     raise HTTPException(
@@ -480,11 +478,11 @@ def create_app(project: Path | None = None) -> FastAPI:
                         )
                 events.agent_id = body.agent_id
                 events.parent_agent_id = target["parent_id"] if target else ""
-                with events.db:
-                    events.db.execute(
-                        "INSERT INTO requests(request_id,task_id) VALUES(?,?)",
-                        (body.request_id, job["id"] if job else body.request_id),
-                    )
+                task_id, claimed = events.claim_request(
+                    body.request_id, job["id"] if job else body.request_id
+                )
+                if not claimed:
+                    return {"task_id": task_id, "duplicate": True}
                 if job:
                     events.task_id = job["id"]
                     events.emit(

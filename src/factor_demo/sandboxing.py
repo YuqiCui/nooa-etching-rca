@@ -432,6 +432,8 @@ def child_environment(work: Path, **extra):
         "JOBLIB_TEMP_FOLDER": str(cache / "joblib"),
         "MPLBACKEND": "Agg",
         "PYTHONUNBUFFERED": "1",
+        # SDK imports must not discover credential files inside guarded children.
+        "PYTHON_DOTENV_DISABLED": "1",
         "LITELLM_LOCAL_MODEL_COST_MAP": "True",
         # DEV mode makes `import litellm` call load_dotenv(), which walks up to the
         # project-root .env; Landlock denies that open() and the import crashes.
