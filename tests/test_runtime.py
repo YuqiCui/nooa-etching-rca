@@ -95,7 +95,7 @@ def test_real_nooa_wire_v2_output_cap_and_reasoning(monkeypatch):
     body = captured[0]
     assert body.get("max_tokens", body.get("max_completion_tokens")) == 50_000
     assert "context_window" not in body  # local budget metadata must not leak to the API
-    assert body["reasoning_effort"] == "max"
+    assert body["reasoning_effort"] == "medium"
     assert body["thinking"] == {"type": "enabled", "clear_thinking": False}
     assert [t["function"]["name"] for t in body["tools"]] == ["python_cell"]
 

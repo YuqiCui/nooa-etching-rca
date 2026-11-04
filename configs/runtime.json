@@ -2,7 +2,7 @@
   "context_window": 272000,
   "max_output_tokens": 50000,
   "thinking": true,
-  "reasoning_effort": "max",
+  "reasoning_effort": "medium",
   "anthropic_thinking_budget": 32000,
   "summary_threshold": null,
   "preserve_recent": 10,

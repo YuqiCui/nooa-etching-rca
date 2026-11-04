@@ -413,7 +413,7 @@ export function useResearch() {
             id: prefix + d.tool_call_id,
             name: d.name,
             agent_id: agentId,
-            code: "",
+            code: d.arguments ? JSON.stringify(d.arguments, null, 2) : "",
             output: "",
             state: "running",
           });
@@ -423,6 +423,7 @@ export function useResearch() {
           if (t) {
             t.state = d.ok ? "ok" : "error";
             t.elapsed = d.elapsed_s;
+            if (d.output) t.output = d.output;
           }
           break;
         }

@@ -22,6 +22,7 @@ from typing import Any
 from factor_demo.autoresearch_agent_v2.agent import Session, SessionState
 from factor_demo.autoresearch_agent_v2.agent.model import Model
 from factor_demo.autoresearch_agent_v2.config import ModelConfig
+from factor_demo.autoresearch_agent_v2.feature_verifier import FeatureAnalyzeVerifier
 from factor_demo.autoresearch_agent_v2.python_tools import PythonTools
 from factor_demo.autoresearch_agent_v2.sandboxing import SandboxConfig
 from factor_demo.autoresearch_agent_v2.tools import FileTools, SandboxTools, TaskTools
@@ -390,6 +391,7 @@ async def _run_agent(args: argparse.Namespace) -> None:
         TaskTools.register(session, storage_root=run / "task_storage")
         session.register_stateful_tool(FileTools)
         session.register_stateful_tool(PythonTools)
+        session.register_stateful_tool(FeatureAnalyzeVerifier)
         status["status"] = "running"
         write_json(run / "status.json", status)
         print(f"Run directory: {run}", flush=True)

@@ -100,9 +100,7 @@ class PythonTools(NotebookTools):
             (
                 "以下仅列出类级功能概览。先通过 python__describe_class 查看所需类的完整接口，"
                 "再在 Notebook cell 中通过 ClassName.method(...) 同步调用；未查看的类不可调用。"
-                "所有代码验证都必须写入 Notebook，再用 notebook__exec_cell 执行。"
-                "同一 Notebook 的变量跨 cell 保留；需要独立代码片段或全新变量空间时，"
-                "使用 notebook__create_notebook 创建新的 Notebook。不要猜测参数或返回字段。"
+                "已登记的工具类仅在 Notebook 中可用。不要猜测参数或返回字段。"
             ),
         ]
         for name, tool_class in self._classes.items():

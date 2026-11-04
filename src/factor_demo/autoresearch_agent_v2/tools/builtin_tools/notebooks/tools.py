@@ -19,7 +19,7 @@ from ....utils.file import FileToolError, WorkspaceFiles
 from ...base import ToolFactory
 from ..sandbox import SandboxTools
 from .kernel import NotebookKernel
-from .typing import CellId, CellSource, NotebookName, Revision
+from .typing import MAX_CELL_SOURCE_CHARS, CellId, CellSource, NotebookName, Revision
 
 if TYPE_CHECKING:
     from ....agent.session import Session
@@ -101,7 +101,14 @@ class NotebookTools:
             (self.write_new_cell, "在指定名称的 Notebook 中插入 cell，不执行代码。"),
             (self.list_cells, "列出 Notebook 的 cell 顺序、版本和执行状态。"),
             (self.read_cell, "读取 cell 的完整源码、版本和上次输出。"),
-            (self.edit_cell, "检查版本后修改 cell；修改不会执行或更新 kernel 内存。"),
+            (
+                self.edit_cell,
+                (
+                    "检查 expected_revision 后修改 cell。优先用 old_string/new_string 精确替换；"
+                    "默认要求唯一匹配，replace_all=true 替换全部。"
+                    "整体替换时仅传 source。两种方式互斥，修改不执行代码。"
+                ),
+            ),
             (self.exec_cell, "在该 Notebook 已连接的 kernel 中执行明确版本的 cell。"),
         )
         for function, description in declarations:
@@ -115,7 +122,7 @@ class NotebookTools:
             "Notebook 工具按 notebook_name 管理当前 Session 的 Notebook。先 create_notebook，"
             "成功时已经连接独立 kernel；无需 open/connect。list_notebooks 查看名称与连接状态。"
             "同名创建报错，不覆盖已有代码或重置内存。不同 Notebook 的变量独立，文件共享会话工作目录。"
-            "代码验证只通过 Notebook cell 执行；需要独立片段或全新内存时创建新的 Notebook。"
+            "需要全新变量空间时创建新的 Notebook。"
             "write_new_cell/edit_cell 只修改文档；exec_cell 必须使用返回的明确 revision。"
             "编辑不会撤销旧执行的变量，也不会自动重跑依赖 cell。Python 异常可能保留部分状态；"
             "超时、取消或崩溃会断开受影响的 kernel，不能假定变量仍然存在。"
@@ -127,6 +134,19 @@ class NotebookTools:
         if notebook_name not in self._kernels:
             raise FileToolError("notebook_not_found", "Use list_notebooks or create_notebook.")
         return f"{self._folder}/{notebook_name}.ipynb"
+
+    async def snapshot_notebook(self, notebook_name: str) -> str:
+        """为宿主验证流程读取一致快照，不向模型新增文件访问能力。
+
+        Args:
+            notebook_name: 当前工具实例持有的 Notebook 名称。
+
+        Returns:
+            含代码、版本及执行输出的标准 Notebook JSON。
+        """
+        async with self._lock:
+            self.files.require_open()
+            return nbformat.writes(self._read_document(notebook_name))
 
     def _read_document(self, notebook_name: str) -> NotebookNode:
         """通过受限文件入口读取并校验标准 Notebook 文档。"""
@@ -321,24 +341,52 @@ class NotebookTools:
         self,
         notebook_name: NotebookName,
         cell_id: CellId,
-        source: CellSource,
         expected_revision: Revision,
+        source: CellSource | None = None,
+        old_string: CellSource | None = None,
+        new_string: CellSource | None = None,
+        replace_all: bool = False,
     ) -> dict[str, Any]:
-        """检查版本后替换完整源码，保留旧输出及其执行版本，不自动执行。
+        """检查版本后局部替换或更新完整源码，保留旧输出，不自动执行。
 
         Args:
             notebook_name: 当前 Session 中已创建的 Notebook 名称。
             cell_id: 要修改的稳定 cell 标识。
-            source: 替换后的完整源码，可以为空。
             expected_revision: 最近一次读取或写入返回的当前版本。
+            source: 整体替换后的源码，可为空；与局部替换参数互斥。
+            old_string: 要替换的非空原文，默认要求唯一匹配。
+            new_string: 替换文本，空字符串表示删除。
+            replace_all: 是否替换全部不重叠匹配，仅用于局部替换。
 
         Returns:
-            新 revision 和旧 executed_revision；版本冲突时不修改文档。
+            新 revision 和旧 executed_revision；内容未变时版本不变。
+            参数无效、版本冲突、匹配失败或歧义时返回错误，不修改文档。
         """
+        if source is not None:
+            if old_string is not None or new_string is not None or replace_all:
+                raise FileToolError("invalid_argument", "仅传 source，或传 old_string/new_string。")
+        elif not old_string or new_string is None:
+            raise FileToolError(
+                "invalid_argument", "局部修改须同时提供非空 old_string 和 new_string。"
+            )
         previous = self._read_document(notebook_name)
         document = nbformat.from_dict(previous)
         cell = self._find_cell(document, cell_id)
         self._check_revision(cell, expected_revision)
+        if source is None:
+            assert old_string is not None and new_string is not None
+            first = cell.source.find(old_string)
+            if first < 0:
+                raise FileToolError("no_match", "读取 cell，复制要修改的准确原文。")
+            if not replace_all and cell.source.find(old_string, first + 1) >= 0:
+                raise FileToolError(
+                    "ambiguous_match", "补充上下文以唯一匹配，或使用 replace_all=true。"
+                )
+            source = cell.source.replace(old_string, new_string, -1 if replace_all else 1)
+        if len(source) > MAX_CELL_SOURCE_CHARS:
+            raise FileToolError("invalid_argument", "修改后的 cell 源码超过字符上限。")
+        if source == cell.source:
+            return {"notebook_name": notebook_name, **self._cell_summary(cell)}
         cell.source = source
         cell.metadata.setdefault("agent", {})["revision"] = expected_revision + 1
         self._save_document(notebook_name, document, previous)

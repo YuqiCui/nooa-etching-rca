@@ -232,7 +232,7 @@ def create_app(project: Path | None = None) -> FastAPI:
                 await asyncio.to_thread(prepare_generic_workspace, data, run, body.data_schema)
         except (ValueError, OSError) as error:
             raise HTTPException(400, str(error)) from None
-        write_json(run / "ui.json", {"title": body.title})
+        write_json(run / "ui.json", {"title": body.title, "engine": "autoresearch_v2"})
         return info(run)
 
     @app.get("/api/sessions/{name}")
@@ -620,7 +620,7 @@ def create_app(project: Path | None = None) -> FastAPI:
         }
         if target.suffix.lower() in images:
             return FileResponse(target, media_type=images[target.suffix.lower()])
-        if target.suffix.lower() in {".joblib", ".parquet"}:
+        if target.suffix.lower() in {".joblib", ".parquet", ".ipynb"}:
             return FileResponse(target, media_type="application/octet-stream", filename=target.name)
         if target.suffix.lower() not in {".csv", ".json", ".md", ".txt", ".py", ".parquet"}:
             raise HTTPException(400, "Unsupported artifact type")

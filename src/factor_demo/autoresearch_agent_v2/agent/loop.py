@@ -38,6 +38,7 @@ class AgentLoop:
         self.session = session
         self.system_prompt = system_prompt
         self.tools = create_tool_factory()
+        self.terminal_tool = "finish"
         self.history_config = history_config if history_config is not None else HistoryConfig()
 
     async def before_run_hook(self, content: str) -> str:
@@ -50,6 +51,10 @@ class AgentLoop:
             交给本次循环的用户输入。
         """
         return content
+
+    async def before_completion_hook(self) -> None:
+        """在完整工具批次结束后接收后台反馈，避免打断工具消息协议。"""
+        pass
 
     async def after_run_hook(self) -> None:
         """在本次运行结束时执行钩子，默认不做处理。"""
@@ -92,6 +97,7 @@ class AgentLoop:
             content = await self.before_run_hook(content)
             self.session.messages.append({"role": "user", "content": content})
             while True:
+                await self.before_completion_hook()
                 schemas = self.tools.schemas()
                 system_prompt = self.build_system_prompt()
                 messages = [
@@ -138,7 +144,7 @@ class AgentLoop:
                     self.session.messages.append(
                         {
                             "role": "user",
-                            "content": "请调用工具继续；如需结束本轮，请调用 finish(content) 提交最终回复。",
+                            "content": f"请调用工具继续；结束本轮请调用 {self.terminal_tool}。",
                         }
                     )
                     continue
@@ -165,13 +171,13 @@ class AgentLoop:
                             ),
                         }
                     )
-                    if function["name"] == "finish" and not failed:
+                    if function["name"] == self.terminal_tool and not failed:
                         for skipped_call in tool_calls[index + 1 :]:
                             self.session.messages.append(
                                 {
                                     "role": "tool",
                                     "tool_call_id": skipped_call["id"],
-                                    "content": "未执行：finish 已结束本轮。",
+                                    "content": f"未执行：{self.terminal_tool} 已结束本轮。",
                                 }
                             )
                         return result

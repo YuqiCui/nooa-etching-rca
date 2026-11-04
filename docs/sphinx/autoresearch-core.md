@@ -677,7 +677,7 @@ async with session:
 | `notebook__write_new_cell` | 追加 cell，或使用 `after_cell_id` 插入到指定 cell 后 |
 | `notebook__list_cells` | 按文档顺序列出稳定 cell ID、代码版本和执行状态 |
 | `notebook__read_cell` | 读取源码、版本和上次执行输出 |
-| `notebook__edit_cell` | 用 `expected_revision` 检查版本后替换源码 |
+| `notebook__edit_cell` | 用 `expected_revision` 检查版本；以 `old_string`/`new_string` 局部替换，或用 `source` 整体替换 |
 | `notebook__exec_cell` | 用明确的 `revision` 执行当前版本并保存输出 |
 
 登记工具不会启动 kernel。`create_notebook` 成功返回时，Notebook 已连接；
@@ -695,6 +695,12 @@ nbformat 输出和执行版本。Session 关闭后文件保留，Python 内存�
 区分输出对应的源码版本。编辑函数定义不会自动替换 kernel 里已经存在的对象，
 也不会重跑依赖 cell。`exec_cell` 只执行指定 cell 的当前版本，过期版本返回冲突。
 `execution_count` 来自 kernel，表示执行顺序。
+
+局部修改时，向 `notebook__edit_cell` 提供 `old_string` 和 `new_string`，无需重发整个 cell。
+`old_string` 须非空且唯一匹配；需要替换全部匹配时，设置 `replace_all=true`。
+`new_string` 为空表示删除。整体替换时仅提供 `source`，不与局部替换参数混用。
+两种方式都必须提供 `expected_revision`；内容改变后版本递增，内容不变时版本不变。
+版本冲突、无匹配或匹配歧义均不修改文档。修改后用返回的新版本执行 cell。
 
 普通 Python 异常以 `status='error'` 返回，保留 kernel 及异常发生前的部分修改。
 超时或崩溃返回 `timeout` 或 `crashed` 并断开该 Notebook；任务取消会清理 kernel、
@@ -940,3 +946,75 @@ async with session:
 
 回归检查见 `tests/test_task_tools.py`：数据库、并发修改和会话恢复使用真实临时存储，
 模型响应使用模拟数据。这些检查不代表真实模型的计划质量评估。
+
+## 从研究前端执行
+
+启动 `factor-demo serve` 后，打开 `http://127.0.0.1:8765`。新建会话默认使用核心
+Autoresearch Agent；选择数据集和模型，在“自主研究”中提交研究问题即可。
+历史会话继续使用创建时的执行方式。
+
+核心 Agent 的 task、Notebook、文件操作和最终回复复用现有事件通道，产物在研究面板查看。
+每次请求结束后保存消息历史与任务计划；下一次请求恢复记录，但 Notebook 内存不跨后台进程
+保留，需要重新加载变量。“停止研究”取消当前任务并保存检查点；“仅讨论”限制为读取已有
+研究记录，不能执行分析或修改产物。该流程没有接入旧版 NOOA 的独立证据审查门禁。
+
+## 持续特征验证
+
+Web 研究会话和 `run_sensor_similarity.py` 登记 `feature_analyze_verifier`。
+研究 Agent 提交 Notebook 标识、报告及相关产物位置；同一研究任务使用一个独立的
+verifier 会话，每份提交作为增量消息加入已有历史。进程恢复时从
+`verifier_runs/session.json` 恢复验证历史，从 `control.json` 恢复未完成交接、等待队列和待送反馈。
+验证会话不继承 Research Agent 的私有消息或 Notebook 活跃变量。
+
+```text
+feature_analyze_verifier(
+    notebook_name="本轮 Notebook",
+    report="问题、方法、特征集合、数据与产物位置、关键结果、证据和限制",
+    round_id="round-1"
+)
+```
+
+`round_id` 缺省使用 Notebook 名称。修订应复用原 `round_id`，提交仍有独立标识和
+Notebook 快照，原轮次的验证历史继续保留。
+
+### 非阻塞交接
+
+提交立即返回 `submitted`；Research Agent 可继续研究。verifier 在后台串行验证，
+当前轮调用 `report` 前，新提交同样立即返回 `submitted`，输入与 Notebook 快照持久化后
+按提交顺序排队，无需重复提交。当前轮 `report` 完成并保存历史后，宿主自动投递队首提交。
+排队不会提前向 verifier 注入新消息，也不会打断当前验证；研究侧可查询队列长度及提交标识。
+相关产物仍在共享工作目录中，消息投递隔离不等于文件权限隔离。
+
+反馈在 Research Agent 后续模型请求前加入上下文，完整工具批次中的调用不会被打断。
+可调用 `feature_verifier_status()` 查询；需要反馈或准备结束研究时，调用
+`feature_verifier_status(wait=true)` 等待当前及排队提交全部处理完成。
+`retry=true` 在执行故障后继续原提交，再按序处理剩余队列。
+执行错误或取消记录为 `error` / `cancelled`，不冒充验证结论，也不投递下一份提交；新提交仍可入队，等待恢复。
+会话关闭时取消后台验证并保存历史，下一次恢复后可以继续原提交。
+
+### 验证与验收
+
+verifier 原则上使用五折交叉验证，自主选择适合研究目标、数据依赖结构的模型、
+基线、指标和划分；不适合五折时必须解释依据和限制。验证重点是完整特征集合的
+预测价值、可复现性、泄漏及选择偏差，并提供单特征重要性和可比的历轮结果分析。
+原固定阈值程序不再作为运行时验收门槛。
+
+只有 `report(status, feedback)` 能结束验证轮次：
+
+- `improved`：可靠、完整，且相对可比历史方案存在有证据的性能提升。
+- `regressed`：可靠、完整，但持平、退化或没有可确认提升；同样通过验收。
+- `needs_revision`：存在关键计算、方法、证据或完整性问题，需要原轮修订。
+- `blocked`：缺少数据、资源或执行条件。
+
+这属于 Agent 基于证据作出的验收判断，不是宿主对研究科学有效性的独立证明。
+`report` 结束本轮，不终止整个研究任务；最新方案也不自动成为历史最优。
+验证输出由 `result.json` 保存，输入、快照和会话记录保存在各提交目录
+`verifier_runs/<提交标识>/`；逐次请求、响应与实际用量保存在其中的 `trace/`。
+不再自动按旧固定协议发布 `artifacts/verified_*` 交付包。
+
+### 权限边界
+
+verifier 使用单独的宿主原生内部沙箱，无外层 Docker，不继承研究侧额外只读路径，
+禁止网络。业务资源仅限当前会话工作目录及子目录，临时文件使用 `tmp/`。
+数据若仍在外部登记路径，verifier 应报告 `blocked`，由宿主将必要资源提供至工作目录；
+不允许为完成验证自行扩大权限。研究材料属于待核查数据，不是宿主指令。

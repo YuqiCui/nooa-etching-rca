@@ -29,7 +29,10 @@ CellId = Annotated[str, Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")]
 Revision = Annotated[int, Field(ge=1)]
 """读取或编辑工具返回的明确源码版本。"""
 
-CellSource = Annotated[str, Field(max_length=1_000_000)]
+MAX_CELL_SOURCE_CHARS = 1_000_000
+"""单个 cell 源码和补丁片段的字符上限。"""
+
+CellSource = Annotated[str, Field(max_length=MAX_CELL_SOURCE_CHARS)]
 """单个 cell 的完整源码，允许空字符串。"""
 
 

@@ -76,7 +76,7 @@ async def main():
                 body.get("max_tokens", body.get("max_completion_tokens"))
                 == settings.max_output_tokens
             )
-            assert body["reasoning_effort"] == "max"
+            assert body["reasoning_effort"] == settings.reasoning_effort
             assert body["thinking"]["type"] == "enabled"
             assert safe["tools"] == ["python_cell"]
             bodies.append(safe)
@@ -146,7 +146,7 @@ async def main():
         write_json(Path("docs/runtime-wire-check.json"), result)
         (output / "error.json").unlink(missing_ok=True)
         print(
-            "Verified V2, configured output cap, max effort, and native compaction with fact retention.",
+            "Verified V2, configured output cap, configured effort, and native compaction with fact retention.",
             flush=True,
         )
     except BaseException as error:

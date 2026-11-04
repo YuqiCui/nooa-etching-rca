@@ -17,7 +17,7 @@ class RuntimeSettings(BaseModel):
     context_window: int = 272_000
     max_output_tokens: int = 50_000
     thinking: bool = True
-    reasoning_effort: Literal["low", "high", "max"] = "max"
+    reasoning_effort: Literal["low", "medium", "high", "max"] = "medium"
     anthropic_thinking_budget: int = 32_000
     summary_threshold: int | None = None
     preserve_recent: int = 10

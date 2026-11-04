@@ -117,7 +117,7 @@ def test_model_override_preserves_provider_connection(tmp_path, monkeypatch):
         assert config.max_tokens is None
         assert config.num_retries == 10
         assert config.thinking["type"] == "enabled"
-        assert config.reasoning_effort == "max"
+        assert config.reasoning_effort == "medium"
         if model.startswith("glm-"):
             assert config.thinking["clear_thinking"] is False
         assert "budget_tokens" not in config.thinking
@@ -126,7 +126,7 @@ def test_model_override_preserves_provider_connection(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("model", ["glm-5.3-flash", "deepseek-v4.1-flash"])
-@pytest.mark.parametrize("effort", ["high", "max"])
+@pytest.mark.parametrize("effort", ["medium", "high", "max"])
 def test_reasoning_controls_reach_sdk_request_body(tmp_path, monkeypatch, model, effort):
     """用真实 SDK 序列化核对旧配置的推理强度，不访问模型服务。"""
     from factor_demo.providers import Provider

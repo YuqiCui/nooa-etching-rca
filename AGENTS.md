@@ -22,6 +22,13 @@ Use Python 3.12 or 3.13, uv, and Node 24.
 - `npm run build --prefix frontend`: type-check and build the interface.
 - `npm ci --prefix docs` followed by `make docs-check`: build and validate Sphinx documentation.
 
+## 运行环境约束
+
+- 项目服务、Agent、测试、验证和对比实验均在宿主机原生环境中运行，使用本机 Python、uv 和 Node；禁止额外套用 Docker 或 Docker Compose 作为外层运行环境。
+- 此约束仅针对外层容器。必须保留 Agent 内部的执行沙箱、文件访问限制、网络限制和凭据隔离，并使用适合当前宿主平台的受支持沙箱后端。
+- 不得为使用仅支持 Linux 的后端而自行改用 Docker，也不得关闭内部沙箱来实现原生运行。当前平台缺少必要能力时，明确报告阻塞原因。
+- 只有用户明确要求使用外层 Docker 时，才可针对该次任务采用；既有 Docker 脚本或历史实验配置不构成使用授权。
+
 ## Coding Style & Naming Conventions
 
 Use four-space Python indentation, `snake_case` functions and modules, and `PascalCase` classes. Follow the configured Ruff checks and 100-character line length. Prefer existing scientific libraries and shared project utilities over custom replacements. Keep modules focused and match adjacent Vue/TypeScript conventions.

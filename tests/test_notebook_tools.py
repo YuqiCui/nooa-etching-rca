@@ -215,6 +215,165 @@ def test_cell_editing_order_revision_checks_and_persisted_outputs(tmp_path):
     asyncio.run(scenario())
 
 
+def test_cell_patch_preserves_outputs_and_memory_until_execution(tmp_path):
+    """局部修改只更新文档版本，执行新版本后才改变变量和输出。"""
+
+    async def scenario():
+        async with make_session(tmp_path) as session:
+            created = await session.call("notebook__create_notebook", {"notebook_name": "patch"})
+            first = await execute_source(session, "patch", "x = 1\nprint(x)")
+            edited = await session.call(
+                "notebook__edit_cell",
+                {
+                    "notebook_name": "patch",
+                    "cell_id": first["cell_id"],
+                    "expected_revision": 1,
+                    "old_string": "x = 1",
+                    "new_string": "x = 2",
+                },
+            )
+            assert edited["revision"] == 2 and edited["executed_revision"] == 1
+            assert edited["stale"] is True
+            read = await session.call(
+                "notebook__read_cell", {"notebook_name": "patch", "cell_id": first["cell_id"]}
+            )
+            assert read["source"] == "x = 2\nprint(x)"
+            assert output_text(read) == "1\n"
+            assert output_text(await execute_source(session, "patch", "x")) == "1"
+            result = await session.call(
+                "notebook__exec_cell",
+                {
+                    "notebook_name": "patch",
+                    "cell_id": first["cell_id"],
+                    "revision": edited["revision"],
+                },
+            )
+            assert output_text(result) == "2\n" and result["stale"] is False
+            document = nbformat.read(created["path"], as_version=4)
+            assert document.cells[0].source == "x = 2\nprint(x)"
+            assert document.cells[0].metadata.agent.executed_revision == 2
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("source", "patch", "expected"),
+    [
+        ("print('你好')\n", {"old_string": "你好", "new_string": "世界"}, "print('世界')\n"),
+        ("x = 1\nprint(x)\n", {"old_string": "print(x)\n", "new_string": ""}, "x = 1\n"),
+        (
+            "x = 1\ny = 1\n",
+            {"old_string": "= 1", "new_string": "= 2", "replace_all": True},
+            "x = 2\ny = 2\n",
+        ),
+        ("aaa", {"old_string": "aa", "new_string": "b", "replace_all": True}, "ba"),
+        ("print(1)", {"source": ""}, ""),
+    ],
+)
+def test_cell_patch_document_edits(tmp_path, monkeypatch, source, patch, expected):
+    """只模拟内核启动，验证实际文档的局部替换、删除和整段清空。"""
+    monkeypatch.setattr(NotebookKernel, "start", AsyncMock())
+
+    async def scenario():
+        async with make_session(tmp_path) as session:
+            await session.call("notebook__create_notebook", {"notebook_name": "patch"})
+            cell = await session.call(
+                "notebook__write_new_cell", {"notebook_name": "patch", "source": source}
+            )
+            result = await session.call(
+                "notebook__edit_cell",
+                {
+                    "notebook_name": "patch",
+                    "cell_id": cell["cell_id"],
+                    "expected_revision": 1,
+                    **patch,
+                },
+            )
+            assert result["revision"] == 2 and result["stale"] is True
+            read = await session.call(
+                "notebook__read_cell", {"notebook_name": "patch", "cell_id": cell["cell_id"]}
+            )
+            assert read["source"] == expected
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("patch", "error"),
+    [
+        ({}, "invalid_argument"),
+        ({"old_string": "x"}, "invalid_argument"),
+        ({"new_string": "y"}, "invalid_argument"),
+        ({"old_string": "", "new_string": "y"}, "invalid_argument"),
+        ({"source": "z", "old_string": "x", "new_string": "y"}, "invalid_argument"),
+        ({"source": "z", "replace_all": True}, "invalid_argument"),
+        ({"old_string": "missing", "new_string": "y"}, "no_match"),
+        ({"old_string": "x", "new_string": "y"}, "ambiguous_match"),
+        ({"old_string": "aa", "new_string": "y"}, "ambiguous_match"),
+        (
+            {"old_string": "x", "new_string": "y", "expected_revision": 2},
+            "revision_conflict",
+        ),
+    ],
+)
+def test_invalid_cell_patches_leave_document_unchanged(tmp_path, monkeypatch, patch, error):
+    """参数、匹配或版本错误不改变文件和源码版本。"""
+    monkeypatch.setattr(NotebookKernel, "start", AsyncMock())
+
+    async def scenario():
+        async with make_session(tmp_path) as session:
+            created = await session.call("notebook__create_notebook", {"notebook_name": "patch"})
+            cell = await session.call(
+                "notebook__write_new_cell", {"notebook_name": "patch", "source": "x = x\naaa"}
+            )
+            before = Path(created["path"]).read_bytes()
+            result = await session.call(
+                "notebook__edit_cell",
+                {
+                    "notebook_name": "patch",
+                    "cell_id": cell["cell_id"],
+                    "expected_revision": 1,
+                    **patch,
+                },
+            )
+            assert result["error"] == error
+            assert Path(created["path"]).read_bytes() == before
+
+    asyncio.run(scenario())
+
+
+def test_cell_patch_size_limit_and_unchanged_revision(tmp_path, monkeypatch):
+    """限制补丁展开后的总长度，未改变内容时保留原版本。"""
+    monkeypatch.setattr(NotebookKernel, "start", AsyncMock())
+
+    async def scenario():
+        async with make_session(tmp_path) as session:
+            created = await session.call("notebook__create_notebook", {"notebook_name": "patch"})
+            cell = await session.call(
+                "notebook__write_new_cell", {"notebook_name": "patch", "source": "a" * 1_000_000}
+            )
+            arguments = {
+                "notebook_name": "patch",
+                "cell_id": cell["cell_id"],
+                "expected_revision": 1,
+            }
+            before = Path(created["path"]).read_bytes()
+            too_large = await session.call(
+                "notebook__edit_cell",
+                {**arguments, "old_string": "a", "new_string": "aa", "replace_all": True},
+            )
+            assert too_large["error"] == "invalid_argument"
+            for replacement in (
+                {"old_string": "a", "new_string": "a", "replace_all": True},
+                {"source": "a" * 1_000_000},
+            ):
+                unchanged = await session.call("notebook__edit_cell", {**arguments, **replacement})
+                assert unchanged["revision"] == 1
+            assert Path(created["path"]).read_bytes() == before
+
+    asyncio.run(scenario())
+
+
 def test_python_errors_preserve_memory_and_rich_output_is_saved(tmp_path):
     async def scenario():
         async with make_session(tmp_path) as session:

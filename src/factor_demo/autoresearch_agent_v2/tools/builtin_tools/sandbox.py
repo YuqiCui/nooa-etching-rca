@@ -1,4 +1,4 @@
-"""把隔离 Shell 绑定到 Session，Python 验证统一由 Notebook 提供。"""
+"""把隔离 Shell 绑定到 Session，支持文件操作和脚本执行。"""
 
 from __future__ import annotations
 
@@ -91,7 +91,7 @@ class SandboxTools:
         yield cls(sandbox)
 
     def register_tools(self, factory: ToolFactory) -> None:
-        """注册带参数校验的 Shell 工具，代码验证交由 Notebook。
+        """注册带参数校验的 Shell 工具。
 
         Args:
             factory: 当前会话启动期间使用的工具表。
@@ -104,8 +104,7 @@ class SandboxTools:
         factory.add_instructions(
             f"当前会话单次执行的超时上限为 {self.sandbox.config.timeout_s:g} 秒；"
             "timeout_s 只能缩短该上限，省略时使用默认上限。"
-            "Shell 用于工作目录内的文件和命令操作。Python 代码验证必须使用 Notebook 工具；"
-            "需要独立代码片段时创建新的 Notebook，不使用 Shell 绕过 Notebook 执行代码。"
+            "Shell 用于工作目录内的文件操作和 Python 脚本执行。"
         )
 
     async def run_shell(self, command: str, timeout_s: float | None = None) -> SandboxResult:

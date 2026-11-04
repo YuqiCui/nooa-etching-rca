@@ -37,7 +37,14 @@ async def main(args):
             error=None,
         )
     try:
-        await research_turn(
+        ui_path = args.run / "ui.json"
+        ui = json.loads(ui_path.read_text()) if ui_path.exists() else {}
+        runner = research_turn
+        if identity == "main" and ui.get("engine") == "autoresearch_v2":
+            from .autoresearch_web import research_turn as core_research_turn
+
+            runner = core_research_turn
+        await runner(
             local,
             request["provider"],
             request["message"],
