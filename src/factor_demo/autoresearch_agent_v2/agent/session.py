@@ -3,19 +3,25 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from types import TracebackType
-from typing import Any, Self, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 
 from ..config import HistoryConfig
 from ..telemetry import print_session_startup
 from ..tools import StatefulTool, ToolFactory
+from ..tools.policy import AllowTools, ToolPolicy
+from ..tools.registry import ToolRegistry
 from .history import compact_history
 from .loop import AgentLoop
 from .model import Model
 from .prompts import SYSTEM_PROMPT
 from .typing import DatasetRegistration, SessionState
+
+if TYPE_CHECKING:
+    from ..runtime import AgentRuntime
+    from ..skills import SkillRegistry
 
 ResourceT = TypeVar("ResourceT")
 StatefulToolT = TypeVar("StatefulToolT", bound=StatefulTool)
@@ -31,6 +37,10 @@ class Session:
         *,
         system_prompt: str = SYSTEM_PROMPT,
         history_config: HistoryConfig | None = None,
+        tool_registry: ToolRegistry | None = None,
+        allow_tools: AllowTools = "all",
+        skill_registry: SkillRegistry | None = None,
+        skills: Sequence[str] = (),
     ) -> None:
         """创建会话，资源在 start 时才实例化。
 
@@ -39,8 +49,18 @@ class Session:
             state: 对话标识、工作目录和可序列化历史，不存放活资源。
             system_prompt: 各轮模型请求使用的系统提示词。
             history_config: 上下文预算、自动压缩百分比及默认保留轮数。
+            tool_registry: 当前应用显式启用的工具定义，构造时复制快照。
+            allow_tools: all 或明确允许的工具名，不能扩大注册目录。
+            skill_registry: 宿主批准的技能目录；None 不启用技能发现。
+            skills: 第一次模型请求前直接加载的技能标识。
         """
         self.state = state
+        self.tool_registry = tool_registry.copy() if tool_registry is not None else ToolRegistry()
+        self.allow_tools = allow_tools if isinstance(allow_tools, str) else tuple(allow_tools)
+        self.tool_policy = ToolPolicy()
+        self.skill_registry = skill_registry
+        self.initial_skills = tuple(skills)
+        self.runtime: AgentRuntime | None = None
         self.loop = AgentLoop(
             model,
             state,
@@ -48,6 +68,8 @@ class Session:
             history_config=history_config,
         )
         self._providers: dict[type[Any], Callable[[Session], AbstractAsyncContextManager[Any]]] = {}
+        self._eager_resources: set[type[Any]] = set()
+        self._resource_tools: dict[type[Any], tuple[str, ...]] = {}
         self._instances: dict[type[Any], Any] = {}
         self._stateful_tools: dict[type[StatefulTool], str] = {}
         self._stack = AsyncExitStack()
@@ -67,6 +89,19 @@ class Session:
             ),
             recover_validation_errors=True,
         )
+        self.tool_registry.install(self)
+        if skill_registry is not None:
+            self._register_skills(skill_registry)
+        elif skills or state.skill_snapshots:
+            raise ValueError("预加载或恢复技能需要显式提供 skill_registry")
+
+    def _register_skills(self, registry: SkillRegistry) -> None:
+        """登记独立的技能资源，并在请求时构建当前激活内容。"""
+        from ..skills import SkillContext
+        from ..tools.builtin_tools.skills import SkillTools
+
+        SkillTools.register(self, registry=registry, preload=self.initial_skills)
+        self.loop.context_providers.append(lambda: self.resource(SkillContext).instructions())
 
     def register_dataset(self, name: str, path: str, description: str) -> DatasetRegistration:
         """登记数据位置说明，下一次模型请求使用更新后的条目。
@@ -93,12 +128,17 @@ class Session:
         self,
         resource_type: type[ResourceT],
         factory: Callable[[Session], AbstractAsyncContextManager[ResourceT]],
+        *,
+        eager: bool = True,
+        when_tools: Sequence[str] = (),
     ) -> None:
         """登记资源类型及其工厂，不立即创建实例。
 
         Args:
             resource_type: 资源的类型键，同一会话每种类型只创建一个实例。
             factory: 接收当前会话的异步上下文工厂；按登记顺序执行。
+            eager: 为 False 时仅在获准工具请求该资源时创建。
+            when_tools: 指定工具获准时，在其他依赖资源之前按登记顺序准备。
 
         Raises:
             RuntimeError: 会话已经开始启动或关闭。
@@ -109,6 +149,9 @@ class Session:
         if resource_type in self._providers or resource_type in self._stateful_tools:
             raise ValueError(f"Resource already registered: {resource_type.__name__}")
         self._providers[resource_type] = factory
+        self._resource_tools[resource_type] = tuple(when_tools)
+        if eager:
+            self._eager_resources.add(resource_type)
 
     def register_stateful_tool(self, tool_type: type[StatefulToolT]) -> None:
         """登记有状态工具类，启动时统一调用其 bind 方法。
@@ -130,6 +173,10 @@ class Session:
         if namespace in self._stateful_tools.values():
             raise ValueError(f"Stateful tool namespace already registered: {namespace}")
         self._stateful_tools[tool_type] = namespace
+
+    def stateful_tool_types(self) -> tuple[type[StatefulTool], ...]:
+        """提供已登记类型的只读快照，供宿主复制可独立创建的通用能力。"""
+        return tuple(self._stateful_tools)
 
     async def bind_resource(
         self,
@@ -208,28 +255,57 @@ class Session:
         self._starting = True
         tools = self.loop.tools.copy()
         try:
+            self._prepare_tool_policy(tools)
             for resource_type, factory in self._providers.items():
-                await self.bind_resource(resource_type, factory)
+                if resource_type in self._eager_resources or any(
+                    self.tool_policy.allows(name) for name in self._resource_tools[resource_type]
+                ):
+                    await self.bind_resource(resource_type, factory)
             for tool_type in self._stateful_tools:
+                names = self.tool_registry.tool_names(tool_type)
+                if not self._tool_group_enabled(tool_type, names):
+                    continue
                 instance = await self._stack.enter_async_context(tool_type.bind(self))
                 if not isinstance(instance, tool_type):
                     raise TypeError(f"bind returned wrong type: {tool_type.__name__}")
                 self._instances[tool_type] = instance
-                instance.register_tools(tools)
+                with tools.registration_scope(names):
+                    instance.register_tools(tools)
         except BaseException:
             try:
                 await self._stack.aclose()
             finally:
                 self._instances.clear()
+                tools.revoke()
+                self.loop.tools.revoke()
             raise
         finally:
             self._starting = False
+        self.loop.tools.revoke()
         self.loop.tools = tools
         self._active = True
         print_session_startup(
-            self, (self._instances[tool_type] for tool_type in self._stateful_tools)
+            self, (self._instances[t] for t in self._stateful_tools if t in self._instances)
         )
         return self
+
+    def _prepare_tool_policy(self, tools: ToolFactory) -> None:
+        """在资源创建前固定工具选择，拒绝未知工具及缺少结束入口的配置。"""
+        names = set(tools.names()) | set(self.tool_registry.names())
+        for tool_type in self._stateful_tools:
+            names.update(self.tool_registry.tool_names(tool_type))
+        self.tool_policy = ToolPolicy(self.allow_tools, names, self.tool_registry.providers())
+        if not self.tool_policy.allows(self.loop.terminal_tool):
+            raise ValueError("当前会话必须允许结束工具 finish")
+        tools.restrict(self.tool_policy)
+
+    def _tool_group_enabled(self, tool_type: type[StatefulTool], names: tuple[str, ...]) -> bool:
+        """受限会话要求静态声明，避免为检查工具名称先执行绑定。"""
+        if names:
+            return any(self.tool_policy.allows(name) for name in names)
+        if self.allow_tools == "all":
+            return True
+        raise ValueError(f"受限会话的工具组必须声明 tool_names：{tool_type.__name__}")
 
     async def aclose(self) -> None:
         """停止接收操作，等待当前操作退出，并逆序释放会话资源。"""
@@ -237,7 +313,9 @@ class Session:
         async with self._operation_lock:
             self._active = False
             # 清除绑定方法引用；清理期间内部实例仍保留至各工厂 finally 完成。
+            self.loop.tools.revoke()
             self.loop.tools = ToolFactory()
+            self.loop.tools.revoke()
             try:
                 await self._stack.aclose()
             finally:
@@ -341,4 +419,7 @@ class Session:
         async with self._operation_lock:
             await self._start_resources()
             self._require_active()
-            return await self.loop.run(content)
+            result = await self.loop.run(content)
+            if self.runtime is None and self.state.parent_agent_id is None:
+                print(result, flush=True)
+            return result

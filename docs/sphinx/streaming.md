@@ -17,6 +17,6 @@ PNG/JPEG与CSV附件在发送前检查存在性、路径和大小。图片以Mar
 
 ## 事件与恢复
 
-事件保存在SQLite，浏览器使用Last-Event-ID或游标重连；请求ID防止重复启动。事件区分工具开始、真实输出、结束、正文start/delta/commit与任务状态。前端按主研究/分支显示过程，不从未完成的python_cell参数中截取用户正文。
+事件保存在SQLite，浏览器使用Last-Event-ID或游标重连；请求ID防止重复启动。事件区分工具开始、真实输出、结束、正文start/delta/commit与任务状态。右侧“实时过程”汇总当前会话的主、子 Agent 推理与工具调用，每条记录以 `Main Agent` 或 `Sub Agent · <agent_id 后四位>` 标明来源；执行中计数包含全部 Agent，较早但仍在运行的记录保留可见。对话和产物仍按选中的研究方向显示，不从未完成的python_cell参数中截取用户正文。
 
 审查未通过或未完成的内容显示“受限检查点”；支持状态降为weak，正文仍明确列出核验等级和限制。修订上限、Reflexion不满意、无进展和预算用尽采用不同状态，不混为budget_exhausted。

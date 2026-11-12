@@ -106,7 +106,7 @@ def test_only_registration_tool_is_exposed_and_closed_session_rejects_it(tmp_pat
                     "invalid_argument"
                 )
             saved_tools = session.loop.tools
-        with pytest.raises(RuntimeError, match="not active"):
+        with pytest.raises(RuntimeError, match="关闭"):
             await saved_tools.call(
                 "register_dataset", {"name": "x", "path": "x", "description": "x"}
             )

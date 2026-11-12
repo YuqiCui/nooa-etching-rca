@@ -6,6 +6,8 @@ from .builtin_tools.messages import finish
 from .builtin_tools.notebooks import NotebookTools
 from .builtin_tools.sandbox import SandboxTools
 from .builtin_tools.tasks import TaskTools
+from .policy import ToolPolicy
+from .registry import ToolRegistry, register_builtin_tools
 
 __all__ = [
     "FileTools",
@@ -14,6 +16,9 @@ __all__ = [
     "StatefulTool",
     "TaskTools",
     "ToolFactory",
+    "ToolPolicy",
+    "ToolRegistry",
     "create_tool_factory",
     "finish",
+    "register_builtin_tools",
 ]

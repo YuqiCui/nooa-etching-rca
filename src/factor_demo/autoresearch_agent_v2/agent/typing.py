@@ -60,6 +60,15 @@ class SessionState(BaseModel):
     workdir: Path
     """Task workspace shared by its agents; storing this path grants no file access."""
 
+    assignment_id: str | None = None
+    """宿主分配的通用委派标识；普通独立会话可以不设置。"""
+
+    skill_snapshots: list[dict[str, Any]] = Field(default_factory=list)
+    """当前激活技能的可恢复快照，由技能加载器校验。"""
+
+    consumed_event_ids: list[str] = Field(default_factory=list)
+    """已写入消息历史的宿主事件，恢复时用于去重。"""
+
     messages: list[dict[str, Any]] = Field(default_factory=list)
     """Ordered, complete message payloads, including provider-specific reasoning and tool fields."""
 

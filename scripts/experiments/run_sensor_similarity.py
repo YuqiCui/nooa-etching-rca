@@ -16,16 +16,19 @@ import shutil
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 from typing import Any
 
 from factor_demo.autoresearch_agent_v2.agent import Session, SessionState
 from factor_demo.autoresearch_agent_v2.agent.model import Model
 from factor_demo.autoresearch_agent_v2.config import ModelConfig
-from factor_demo.autoresearch_agent_v2.feature_verifier import FeatureAnalyzeVerifier
 from factor_demo.autoresearch_agent_v2.python_tools import PythonTools
-from factor_demo.autoresearch_agent_v2.sandboxing import SandboxConfig
+from factor_demo.autoresearch_agent_v2.runtime import AgentRuntime, SessionFactory
+from factor_demo.autoresearch_agent_v2.sandboxing import Sandbox, SandboxConfig
 from factor_demo.autoresearch_agent_v2.tools import FileTools, SandboxTools, TaskTools
+from factor_demo.autoresearch_agent_v2.tools.registry import ToolRegistry
+from factor_demo.business_tools import register_business_tools
 from factor_demo.dataset_adapter import discovery_copy
 from factor_demo.io_utils import write_json
 from factor_demo.providers import load_provider
@@ -320,12 +323,13 @@ async def _run_agent(args: argparse.Namespace) -> None:
         workdir=workdir,
     )
 
-    def record_usage(usage: dict[str, Any] | None) -> None:
+    def record_usage(usage: dict[str, Any] | None, agent_id: str = state.agent_id) -> None:
         """逐响应落盘原始用量，并原子更新累计统计。"""
         record = {
             "response_index": len(records) + 1,
             "received_at": datetime.now(UTC).isoformat(),
             "usage": usage,
+            "agent_id": agent_id,
         }
         with (run / "token_usage.jsonl").open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -351,9 +355,7 @@ async def _run_agent(args: argparse.Namespace) -> None:
                 "task_timeout_s": args.timeout,
                 "tool_timeout_s": args.tool_timeout,
                 "tool_call_format": "native",
-                "session_concurrency": 1,
-                "api_concurrency": 1,
-                "tool_concurrency": 1,
+                "max_concurrent_children": 4,
             },
         )
         if args.resume_from:
@@ -374,30 +376,53 @@ async def _run_agent(args: argparse.Namespace) -> None:
         )
         (run / "task.txt").write_text(task, encoding="utf-8")
         model = _TracingModel(config, state, run, record_usage)
-        session = Session(model, state)
+        registry = ToolRegistry()
+        registry.register_stateful(FileTools)
+        registry.register_stateful(PythonTools)
+        registry.register_stateful(SandboxTools)
+        register_business_tools(registry)
+        session = Session(model, state, tool_registry=registry)
         session.register_dataset(
             "DATASET",
             str(run / "input"),
             "A、B 两组传感器统计特征及原始曲线；",
         )
-        SandboxTools.register(
-            session,
-            config=SandboxConfig(
+        session.register_resource(
+            Sandbox,
+            partial(SandboxTools.create_sandbox, config=SandboxConfig(
                 workdir=workdir,
                 read_paths=(run / "input",),
                 timeout_s=args.tool_timeout,
-            ),
+            )),
+            eager=False,
         )
         TaskTools.register(session, storage_root=run / "task_storage")
-        session.register_stateful_tool(FileTools)
-        session.register_stateful_tool(PythonTools)
-        session.register_stateful_tool(FeatureAnalyzeVerifier)
+
+        def child_model(parent, request):
+            """保留子会话模型轨迹，并将真实用量计入当前运行汇总。"""
+            child_run = run / "agents" / request.state.agent_id
+            child_run.mkdir(parents=True, exist_ok=True)
+            return _TracingModel(
+                config, request.state, child_run,
+                lambda usage: record_usage(usage, request.state.agent_id),
+            )
+
+        runtime = AgentRuntime(
+            run / ".runtime",
+            SessionFactory(
+                configure=lambda child: TaskTools.register(
+                    child, storage_root=run / "task_storage"
+                ),
+                model_factory=child_model,
+            ),
+        )
+        runtime.attach(session)
         status["status"] = "running"
         write_json(run / "status.json", status)
         print(f"Run directory: {run}", flush=True)
         async with asyncio.timeout(args.timeout):
-            async with session:
-                result = await session.run(recovery_prompt if args.resume_from else task)
+            async with session, runtime:
+                result = await runtime.run(session, recovery_prompt if args.resume_from else task)
         (run / "final_response.md").write_text(result, encoding="utf-8")
         status["status"] = "completed"
     except TimeoutError:

@@ -1,0 +1,9 @@
+flowchart LR
+  U[用户请求] --> P[通用 Session]
+  P --> R[授权后的工具目录]
+  P -->|任务与 skill| A[子 Session A]
+  P -->|任务与 skill| B[子 Session B]
+  A -->|finish| M[父收件箱]
+  B -->|finish| M
+  M --> P
+  P -->|finish| O[用户输出]

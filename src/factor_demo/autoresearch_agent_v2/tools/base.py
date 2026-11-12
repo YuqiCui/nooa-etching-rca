@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from contextlib import AbstractAsyncContextManager
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import AbstractAsyncContextManager, contextmanager
 from copy import deepcopy
 from functools import wraps
 from inspect import isawaitable
@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 from ..errors import UnknownToolError
 from .builtin_tools.messages import finish
 from .call_context import execution_id
+from .policy import ToolPolicy
 
 if TYPE_CHECKING:
     from ..agent.session import Session
@@ -53,15 +54,21 @@ class ToolFactory:
         """创建空的工具注册表。"""
         self._functions: dict[str, Callable[..., Any]] = {}
         self._schemas: dict[str, dict[str, Any]] = {}
-        self._instructions: list[str] = []
+        self._instructions: list[tuple[tuple[str, ...], str]] = []
+        self.policy: ToolPolicy | None = None
+        self._registration_names: tuple[str, ...] = ()
+        self._revoked = False
 
-    def add_instructions(self, content: str) -> None:
+    def add_instructions(self, content: str, *, names: Sequence[str] | None = None) -> None:
         """追加与当前工具表一起提供给模型的使用说明。
 
         Args:
             content: 不含凭据或宿主内部状态的工具使用说明。
+            names: 说明所依赖的工具名；缺省时使用当前登记组的静态清单。
         """
-        self._instructions.append(content)
+        self._require_open()
+        required = tuple(names) if names is not None else self._registration_names
+        self._instructions.append((required, content))
 
     def instructions(self) -> str:
         """返回拼接后的工具说明。
@@ -69,7 +76,33 @@ class ToolFactory:
         Returns:
             默认提示词之后追加的文本；没有说明时为空字符串。
         """
-        return "\n\n".join(self._instructions)
+        self._require_open()
+        return "\n\n".join(
+            content
+            for names, content in self._instructions
+            if self.policy is None or all(self.policy.allows(name) for name in names)
+        )
+
+    def names(self) -> tuple[str, ...]:
+        """返回已登记名称，用于会话启动前解析工具策略。"""
+        self._require_open()
+        return tuple(self._functions)
+
+    def restrict(self, policy: ToolPolicy) -> None:
+        """将同一授权结果应用到 Schema、说明和真实调用。"""
+        self._require_open()
+        self.policy = policy
+
+    @contextmanager
+    def registration_scope(self, names: Sequence[str]) -> Iterator[None]:
+        """将工具组说明与其公开名称绑定，避免暴露未授权接口。"""
+        self._require_open()
+        previous = self._registration_names
+        self._registration_names = tuple(names)
+        try:
+            yield
+        finally:
+            self._registration_names = previous
 
     def register(
         self,
@@ -90,8 +123,11 @@ class ToolFactory:
         Raises:
             ValueError: 名称已被注册。
         """
+        self._require_open()
         if name in self._functions:
             raise ValueError(f"Tool already registered: {name}")
+        if self.policy is not None:
+            self.policy.include_registered(name)
         self._functions[name] = function
         self._schemas[name] = {
             "type": "function",
@@ -148,7 +184,12 @@ class ToolFactory:
         Returns:
             按注册顺序排列的工具描述列表。
         """
-        return list(self._schemas.values())
+        self._require_open()
+        return [
+            schema
+            for name, schema in self._schemas.items()
+            if self.policy is None or self.policy.allows(name)
+        ]
 
     def copy(self) -> ToolFactory:
         """复制注册表，保留已有函数绑定，并独立保存 Schema。
@@ -156,10 +197,12 @@ class ToolFactory:
         Returns:
             可用于会话启动期间注册工具组的独立工具表。
         """
+        self._require_open()
         factory = ToolFactory()
         factory._functions = self._functions.copy()
         factory._schemas = deepcopy(self._schemas)
         factory._instructions = self._instructions.copy()
+        factory.policy = self.policy
         return factory
 
     async def call(
@@ -179,10 +222,13 @@ class ToolFactory:
             UnknownToolError: 工具名称未注册。
             Exception: 工具执行错误原样向上传播。
         """
+        self._require_open()
         try:
             function = self._functions[name]
         except KeyError as error:
             raise UnknownToolError(f"Unknown tool: {name}. Use a declared tool name.") from error
+        if self.policy is not None:
+            self.policy.require(name)
         token = execution_id.set(call_id)
         try:
             result = function(**arguments)
@@ -193,6 +239,18 @@ class ToolFactory:
             return result
         finally:
             execution_id.reset(token)
+
+    def revoke(self) -> None:
+        """撤销借出的调用入口，释放闭包引用；副本生命周期互不影响。"""
+        self._revoked = True
+        self._functions.clear()
+        self._schemas.clear()
+        self._instructions.clear()
+
+    def _require_open(self) -> None:
+        """阻止关闭后的调用、复制或重新登记恢复已撤销能力。"""
+        if self._revoked:
+            raise RuntimeError("工具工厂已关闭")
 
 
 def create_tool_factory() -> ToolFactory:
@@ -211,7 +269,7 @@ def create_tool_factory() -> ToolFactory:
     factory.register(
         "finish",
         finish,
-        description="向用户发送最终结果，并立即结束当前轮次。用户可继续发送消息。",
+        description="结束当前分配的工作，内容由运行时交给父会话或用户。",
         parameters=parameters,
     )
     return factory

@@ -18,6 +18,7 @@ from .services import (
     StudyService,
     TaskPlanService,
 )
+from .sqlite.agent_runtime import RuntimeStore
 from .sqlite.conversation import SQLiteConversationAuditService as _SQLiteConversationAuditService
 from .sqlite.datasets import SQLiteDatasetService as _SQLiteDatasetService
 from .sqlite.documents import (
@@ -38,11 +39,14 @@ from .sqlite.documents import (
 from .sqlite.events import SQLiteEventService as _SQLiteEventService
 from .sqlite.orchestration import SQLiteBranchService as _SQLiteBranchService
 from .sqlite.orchestration import SQLiteBudgetService as _SQLiteBudgetService
+from .sqlite.records import RecordStore
 from .sqlite.runtime import SQLiteDatabase as _SQLiteDatabase
 from .sqlite.tasks import SQLiteTaskPlanService as _SQLiteTaskPlanService
 
 __all__ = [
     "BudgetExceeded",
+    "RecordStore",
+    "RuntimeStore",
     "StorageError",
     "create_branch_service",
     "create_budget_service",

@@ -29,7 +29,7 @@ def make_loop(tmp_path):
     )
 
 
-def test_tools_continue_and_finish_outputs_then_stops(monkeypatch, tmp_path, capsys):
+def test_tools_continue_and_finish_returns_then_stops(monkeypatch, tmp_path, capsys):
     requests = []
     responses = iter(
         [
@@ -57,7 +57,7 @@ def test_tools_continue_and_finish_outputs_then_stops(monkeypatch, tmp_path, cap
     loop = make_loop(tmp_path)
     loop.tools.register_callable("inspect", lambda content: content, description="检查数据")
     assert asyncio.run(loop.run("Start")) == "Done"
-    assert capsys.readouterr().out == "Done\n"
+    assert capsys.readouterr().out == ""
     assert len(requests) == 2
     for request in requests:
         assert request["messages"][0] == {"role": "system", "content": SYSTEM_PROMPT}
@@ -91,7 +91,7 @@ def test_finish_skips_later_calls_in_same_response(monkeypatch, tmp_path, capsys
 
     monkeypatch.setattr(litellm, "acompletion", complete)
     assert asyncio.run(make_loop(tmp_path).run("Start")) == "Done"
-    assert capsys.readouterr().out == "Done\n"
+    assert capsys.readouterr().out == ""
 
 
 @pytest.mark.parametrize(
@@ -273,11 +273,11 @@ def test_response_without_tool_injects_reminder_and_continues(
     monkeypatch.setattr(litellm, "acompletion", complete)
     loop = make_loop(tmp_path)
     assert asyncio.run(loop.run("Start")) == "Done"
-    assert capsys.readouterr().out == "Done\n"
+    assert capsys.readouterr().out == ""
     assert len(requests) == 3
     reminder = {
         "role": "user",
-        "content": "请调用工具继续；如需结束本轮，请调用 finish(content) 提交最终回复。",
+        "content": "请调用工具继续；结束本轮请调用 finish。",
     }
     for request, content in zip(requests[1:], ["Plain response", "Another response"]):
         assert request["messages"][-2]["role"] == "assistant"
@@ -297,7 +297,7 @@ def test_create_tool_factory_registers_builtins_and_keeps_instances_independent(
     with pytest.raises(KeyError):
         asyncio.run(factory.call("report", {"content": "进展"}))
     assert asyncio.run(factory.call("finish", {"content": "完成"})) == "完成"
-    assert capsys.readouterr().out == "完成\n"
+    assert capsys.readouterr().out == ""
 
     factory.register("extra", lambda: 1, description="扩展工具", parameters={})
     assert [schema["function"]["name"] for schema in other.schemas()] == ["finish"]
@@ -378,9 +378,11 @@ def test_custom_system_prompt_is_sent_to_model(monkeypatch, tmp_path):
     assert asyncio.run(loop.run("Start")) == "Done"
 
 
-def test_default_prompt_uses_finish_for_delivery_and_report_file_for_research():
-    """报告文件不应被误认为旧版的消息交付工具。"""
-    assert "report.md" in SYSTEM_PROMPT
+def test_default_prompt_leaves_business_contracts_to_tasks_and_skills():
+    """共用基础提示词不固定研究合同或专用验证角色。"""
+    assert "skill" in SYSTEM_PROMPT
+    for business_rule in ("report.md", "五折", "ResearchResult", "Verifier", "acceptance_criteria"):
+        assert business_rule not in SYSTEM_PROMPT
     assert "finish(content)" in SYSTEM_PROMPT
     assert "report(content)" not in SYSTEM_PROMPT
 

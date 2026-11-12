@@ -2,7 +2,7 @@
 
 from typing import Annotated, Any, Literal
 
-from pydantic import AfterValidator, BaseModel, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 
 def _validate_notebook_name(value: str) -> str:
@@ -34,6 +34,34 @@ MAX_CELL_SOURCE_CHARS = 1_000_000
 
 CellSource = Annotated[str, Field(max_length=MAX_CELL_SOURCE_CHARS)]
 """单个 cell 的完整源码，允许空字符串。"""
+
+
+class CellWriteRequest(BaseModel):
+    """批量插入中的单个 Python cell。"""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    source: CellSource
+    """完整源码；写入时不执行。"""
+
+
+class CellRunRequest(BaseModel):
+    """批量执行中的 cell 标识与明确源码版本。"""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    cell_id: CellId
+    """写入或读取工具返回的稳定标识。"""
+
+    revision: Revision
+    """要执行的当前源码版本。"""
+
+
+CellWrites = Annotated[list[CellWriteRequest], Field(min_length=1, max_length=100)]
+"""一次插入 1 至 100 个 cell，保持传入顺序。"""
+
+CellRuns = Annotated[list[CellRunRequest], Field(min_length=1, max_length=100)]
+"""一次执行 1 至 100 项，保持传入顺序。"""
 
 
 class CellExecution(BaseModel):

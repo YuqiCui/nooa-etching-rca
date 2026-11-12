@@ -19,9 +19,9 @@ class Source {
   close() {
     this.closed = true;
   }
-  emit(id: number, type: string, data: any, task_id = "one") {
+  emit(id: number, type: string, data: any, task_id = "one", agent_id = "main") {
     this.listener?.({
-      data: JSON.stringify({ id, type, data, task_id, time: 0 }),
+      data: JSON.stringify({ id, type, data, task_id, agent_id, time: 0 }),
     });
   }
 }
@@ -161,6 +161,114 @@ describe("Vue 3 workspace", () => {
     wrapper = undefined;
     expect(source.closed).toBe(true);
   });
+  it("shows progress during research and keeps it alongside the final result", async () => {
+    wrapper = mount(App);
+    await settle();
+    const source = Source.instances.at(-1)!;
+    source.emit(1, "task.start", { mode: "research" });
+    source.emit(2, "reply.commit", {
+      message_id: "progress-one",
+      markdown: "已检查数据\n\n|指标|值|\n|---|---|\n|样本|2|\n\n![图](artifacts/check.png)",
+      publication: "progress",
+    });
+    await settle();
+    expect(wrapper.findAll(".message.assistant")).toHaveLength(1);
+    expect(wrapper.find(".conversation table").exists()).toBe(true);
+    expect(wrapper.find(".conversation img").attributes("src")).toBe(
+      "/api/sessions/case-a/artifacts/artifacts/check.png",
+    );
+    expect(wrapper.find(".activity-line").exists()).toBe(true);
+    source.emit(3, "reply.commit", {
+      message_id: "progress-one",
+      markdown: "已完成数据检查，继续比较",
+      publication: "progress",
+    });
+    source.emit(4, "reply.commit", {
+      message_id: "final",
+      markdown: "最终研究结果",
+      publication: "final",
+    });
+    source.emit(5, "task.end", { status: "checkpoint" });
+    await settle();
+    expect(wrapper.findAll(".message.assistant")).toHaveLength(2);
+    expect(wrapper.find(".conversation").text()).toContain("已完成数据检查，继续比较");
+    expect(wrapper.find(".conversation").text()).toContain("最终研究结果");
+  });
+  it("shows main and runtime child activity together with distinct prefixes", async () => {
+    wrapper = mount(App);
+    await settle();
+    const source = Source.instances.at(-1)!;
+    const child = "32018b59828a47eab86c5896e7b653b0";
+    source.emit(1, "task.start", { mode: "research" });
+    source.emit(2, "model.start", { call_id: "main-model" });
+    source.emit(3, "model.reasoning.delta", { call_id: "main-model", text: "主任务推理" });
+    source.emit(4, "model.start", { call_id: "child-model" }, "one", child);
+    source.emit(5, "model.reasoning.delta", {
+      call_id: "child-model", text: "子任务独立推理",
+    }, "one", child);
+    source.emit(6, "agent.tool.start", {
+      tool_call_id: "same", name: "agent__wait", arguments: {},
+    });
+    source.emit(7, "agent.tool.start", {
+      tool_call_id: "same", name: "sandbox__run_shell", arguments: { command: "child check" },
+    }, "one", child);
+    source.emit(8, "agent.tool.start", {
+      tool_call_id: "same", name: "read_file", arguments: { path: "second-check.txt" },
+    }, "one", "another-42fe");
+    await settle();
+    const panel = wrapper.find(".research-panel");
+    expect(wrapper.findAll(".direction-bar option")).toHaveLength(1);
+    expect(panel.text()).toContain("主任务推理");
+    expect(panel.text()).toContain("子任务独立推理");
+    expect(panel.findAll(".thought-card > summary").map((card) => card.text())).toEqual([
+      expect.stringContaining("Sub Agent · 53b0"),
+      expect.stringContaining("Main Agent"),
+    ]);
+    expect(panel.findAll(".tool-card > summary").map((card) => card.text())).toEqual([
+      expect.stringContaining("Sub Agent · 42fe · 读取研究记录"),
+      expect.stringContaining("Sub Agent · 53b0 · 执行文件操作"),
+      expect.stringContaining("Main Agent · 等待子 Agent 结果"),
+    ]);
+    expect(panel.findAll(".live-metrics b").at(-1)?.text()).toBe("3");
+    source.emit(9, "agent.tool.end", {
+      tool_call_id: "same", name: "sandbox__run_shell", ok: true, output: "子任务真实输出",
+    }, "one", child);
+    await settle();
+    expect(panel.findAll(".tool-card.running")).toHaveLength(2);
+    expect(panel.find(".tool-card.ok").text()).toContain("Sub Agent · 53b0");
+    expect(panel.find(".tool-card.ok").text()).toContain("子任务真实输出");
+    expect(panel.findAll(".live-metrics b").at(-1)?.text()).toBe("2");
+  });
+  it("keeps older active agents visible while another agent produces recent history", async () => {
+    wrapper = mount(App);
+    await settle();
+    const source = Source.instances.at(-1)!;
+    let id = 1;
+    source.emit(id++, "model.start", { call_id: "main-waiting" });
+    source.emit(id++, "agent.tool.start", { tool_call_id: "main-tool", name: "agent__wait" });
+    for (let index = 0; index < 65; index++) {
+      source.emit(id++, "model.start", { call_id: `child-${index}` }, "one", "child-1234");
+      source.emit(id++, "model.stream.end", { call_id: `child-${index}` }, "one", "child-1234");
+      source.emit(id++, "agent.tool.start", {
+        tool_call_id: `child-${index}`, name: "read_file",
+      }, "one", "child-1234");
+      source.emit(id++, "agent.tool.end", {
+        tool_call_id: `child-${index}`, ok: true,
+      }, "one", "child-1234");
+    }
+    await settle();
+    expect(wrapper.findAll(".thought-card > summary").map((card) => card.text())).toContainEqual(
+      expect.stringContaining("Main Agent · 模型正在生成"),
+    );
+    expect(wrapper.find(".tool-card.running").text()).toContain("Main Agent · 等待子 Agent 结果");
+    expect(wrapper.findAll(".live-metrics b").at(-1)?.text()).toBe("1");
+    source.emit(id++, "model.stream.end", { call_id: "main-waiting" });
+    source.emit(id++, "agent.tool.end", { tool_call_id: "main-tool", ok: true });
+    await settle();
+    expect(wrapper.findAll(".thought-card")).toHaveLength(12);
+    expect(wrapper.findAll(".tool-card")).toHaveLength(40);
+    expect(wrapper.findAll(".live-metrics b").at(-1)?.text()).toBe("0");
+  });
   it("sends with Vue v-model, respects IME and discards old session callbacks", async () => {
     wrapper = mount(App);
     await settle();
@@ -188,7 +296,7 @@ describe("Vue 3 workspace", () => {
 });
 
 describe("research branch UI", () => {
-  it("isolates messages/tool cells and routes expert guidance by agent identity", async () => {
+  it("isolates conversation and guidance while keeping all agents in the live panel", async () => {
     wrapper = mount(App);
     await settle();
     const source = Source.instances.at(-1)!;
@@ -261,7 +369,7 @@ describe("research branch UI", () => {
     expect(wrapper.text()).toContain("热过程独立消息");
     expect(wrapper.text()).not.toContain("主研究消息");
     expect(wrapper.text()).toContain('print("thermal")');
-    expect(wrapper.text()).not.toContain('print("pressure")');
+    expect(wrapper.text()).toContain('print("pressure")');
     await wrapper.find("textarea").setValue("检查热响应");
     await wrapper.find("textarea").trigger("keydown", { key: "Enter" });
     await settle();

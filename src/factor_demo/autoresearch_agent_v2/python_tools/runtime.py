@@ -14,7 +14,6 @@ from ..tools.base import ToolFactory
 from ..tools.builtin_tools.notebooks import NotebookTools
 from ..tools.builtin_tools.notebooks.kernel import NotebookKernel
 from ..tools.builtin_tools.sandbox import SandboxTools
-from .base import PythonTool
 from .rendering import render_class_documentation
 from .schema import ToolMethod
 from .typing import ClassDetails, PythonToolCall
@@ -25,6 +24,9 @@ if TYPE_CHECKING:
 
 class PythonTools(NotebookTools):
     """为会话提供类目录、详情加载与 Notebook 中的 Python 调用。"""
+
+    tool_names: ClassVar[tuple[str, ...]] = ("python__describe_class", *NotebookTools.tool_names)
+    """启动前即可确认类发现入口与 Notebook 能力。"""
 
     namespace: ClassVar[str] = "python"
     """类发现入口的前缀；代码执行统一使用 notebook 工具。"""
@@ -38,7 +40,12 @@ class PythonTools(NotebookTools):
         """
         super().__init__(sandbox)
         self._session = session
-        self._classes = PythonTool.registered()
+        self._definitions = session.tool_registry.python_tools()
+        self._classes = {
+            name: entry
+            for name, entry in self._definitions.items()
+            if any(session.tool_policy.allows(f"{name}.{method}") for method in entry.methods)
+        }
         self._loaded: dict[str, dict[str, ToolMethod]] = {}
         self._details: dict[str, str] = {}
         self._stack = AsyncExitStack()
@@ -103,9 +110,16 @@ class PythonTools(NotebookTools):
                 "已登记的工具类仅在 Notebook 中可用。不要猜测参数或返回字段。"
             ),
         ]
-        for name, tool_class in self._classes.items():
-            catalog.append(f"## {name}\n{inspect.getdoc(tool_class)}")
-        factory.add_instructions("\n\n".join(catalog))
+        for name, entry in self._classes.items():
+            permitted = self._allowed_methods(name)
+            overview = (
+                inspect.getdoc(entry.tool_type)
+                if len(permitted) == len(entry.methods)
+                else "当前会话允许的方法：" + "、".join(permitted)
+            )
+            catalog.append(f"## {name}\n{overview}")
+        if self._session.tool_policy.allows("python__describe_class"):
+            factory.add_instructions("\n\n".join(catalog), names=("python__describe_class",))
 
     async def describe_class(self, class_name: str) -> str:
         """加载一个工具类，以 Python 文档形式返回全部公开方法的接口。
@@ -126,7 +140,8 @@ class PythonTools(NotebookTools):
             return self._details[class_name]
         if class_name not in self._classes:
             raise ValueError(f"未知的 Python 工具类：{class_name}")
-        tool_class = self._classes[class_name]
+        entry = self._classes[class_name]
+        tool_class = entry.tool_type
         async with AsyncExitStack() as pending:
             instance = await pending.enter_async_context(tool_class.bind(self._session))
             if not isinstance(instance, tool_class):
@@ -137,10 +152,17 @@ class PythonTools(NotebookTools):
                 for name in methods
             ):
                 raise ValueError("工具必须显式提供合法的公开方法名。")
-            bindings = {name: ToolMethod(name, function) for name, function in methods.items()}
+            if set(methods) != set(entry.methods):
+                raise ValueError("实例公开方法与注册清单不一致")
+            permitted = self._allowed_methods(class_name)
+            bindings = {name: ToolMethod(name, methods[name]) for name in permitted}
             details = ClassDetails(
                 class_name=class_name,
-                docstring=inspect.getdoc(tool_class) or "",
+                docstring=(
+                    inspect.getdoc(tool_class) or ""
+                    if len(permitted) == len(entry.methods)
+                    else "当前会话只开放下列方法。"
+                ),
                 methods=[binding.details for binding in bindings.values()],
             )
             documentation = render_class_documentation(details)
@@ -153,12 +175,21 @@ class PythonTools(NotebookTools):
         """只调度当前会话已查看详情且显式公开的方法。"""
         self._require_open()
         request = PythonToolCall.model_validate(payload)
+        self._session.tool_policy.require(f"{request.class_name}.{request.method_name}")
         if request.class_name not in self._loaded:
             raise PermissionError("必须先通过 python__describe_class 查看该类的完整接口。")
         methods = self._loaded[request.class_name]
         if request.method_name not in methods:
             raise PermissionError("该方法不在工具类的公开接口中。")
         return await methods[request.method_name].call(request.args, request.kwargs)
+
+    def _allowed_methods(self, class_name: str) -> tuple[str, ...]:
+        """只返回当前会话可调用的方法，不暴露同类的其他接口。"""
+        return tuple(
+            method
+            for method in self._classes[class_name].methods
+            if self._session.tool_policy.allows(f"{class_name}.{method}")
+        )
 
     def _require_open(self) -> None:
         """拒绝通过宿主保留的旧引用重新加载或调用已关闭的工具。"""

@@ -236,10 +236,8 @@ def test_failed_startup_revokes_already_created_sandbox(tmp_path):
             await session.start()
         with pytest.raises(RuntimeError, match="closed"):
             await created[0].run_shell("echo should-not-run")
-        assert not any(
-            schema["function"]["name"].startswith("sandbox__")
-            for schema in session.loop.tools.schemas()
-        )
+        with pytest.raises(RuntimeError, match="关闭"):
+            session.loop.tools.schemas()
         await session.aclose()
 
     asyncio.run(scenario())

@@ -61,8 +61,10 @@ const names: Record<string, string> = {
   task_update: "更新研究进展",
   notebook__create_notebook: "创建分析 Notebook",
   notebook__write_new_cell: "编写分析代码",
+  notebook__write_cells: "批量编写分析代码",
   notebook__edit_cell: "修改分析代码",
   notebook__exec_cell: "执行分析与校验",
+  notebook__run_cells: "批量执行分析与校验",
   notebook__read_cell: "读取代码与结果",
   notebook__list_cells: "查看分析步骤",
   notebook__list_notebooks: "查看 Notebook",
@@ -71,6 +73,17 @@ const names: Record<string, string> = {
   read_file: "读取研究记录",
   edit_file: "修改研究记录",
   finish: "提交研究结果",
+  report_progress: "汇报阶段性进展",
+  agent__spawn: "派发子 Agent",
+  agent__status: "查看子 Agent 状态",
+  agent__wait: "等待子 Agent 结果",
+  agent__read_result: "读取子 Agent 结果",
+  agent__cancel: "停止子 Agent",
+  skill__list: "查看可用技能",
+  skill__load: "加载技能",
+  skill__read_resource: "读取技能资料",
+  record__get: "读取研究记录",
+  record__put: "保存研究记录",
   run_code: "执行研究代码",
   write_file: "保存研究脚本",
   run_script: "运行研究脚本",
@@ -109,6 +122,9 @@ function fileSize(size: number) {
 }
 function statusLabel(value: string) {
   return ({ queued: '等待执行', starting: '正在启动', running: '研究中', stopping: '正在停止', completed: '已完成', failed: '执行失败', interrupted: '已中断', cancelled: '已停止', reviewing: '审查中', passed: '检查通过', needs_revision: '需要补证', budget_exhausted: '预算耗尽，保留局限', revision_limit:'达到修订上限，结论待复核', not_required:'图表按需交付', not_reviewed: '尚未完成有效审查' } as Record<string,string>)[value] || value;
+}
+function agentLabel(identity = "main") {
+  return identity === "main" ? "Main Agent" : `Sub Agent · ${identity.slice(-4)}`;
 }
 </script>
 <template>
@@ -358,9 +374,7 @@ function statusLabel(value: string) {
     </main>
     <aside v-if="s.panel" class="research-panel">
       <div class="panel-title">
-        <Radio :size="16" /><strong>{{
-          selectedBranch?.title || "研究现场"
-        }}</strong
+        <Radio :size="16" /><strong>研究现场</strong
         ><span :class="s.active ? 'live-badge' : 'idle-badge'">{{
           s.active ? "LIVE" : "IDLE"
         }}</span>
@@ -451,13 +465,13 @@ function statusLabel(value: string) {
           class="thought-card"
           :open="i === 0"
         >
-          <summary>
+          <summary :title="call.agent_id || 'main'">
             <span class="thought-icon"
               ><Check v-if="call.ended" :size="12" /><LoaderCircle
                 v-else
                 :size="12"
                 class="spin" /></span
-            ><strong>{{
+            ><strong>{{ agentLabel(call.agent_id) }} · {{
               call.ended ? "本次生成已结束" : "模型正在生成"
             }}</strong
             ><span
@@ -493,7 +507,7 @@ function statusLabel(value: string) {
           :class="['tool-card', tool.state]"
           :open="tool.state === 'running'"
         >
-          <summary>
+          <summary :title="tool.agent_id || 'main'">
             <LoaderCircle
               v-if="tool.state === 'running'"
               class="spin"
@@ -501,7 +515,7 @@ function statusLabel(value: string) {
             /><Check v-else-if="tool.state === 'ok'" :size="13" /><X
               v-else
               :size="13"
-            /><strong>{{ names[tool.name] || tool.name }}</strong
+            /><strong>{{ agentLabel(tool.agent_id) }} · {{ names[tool.name] || tool.name }}</strong
             ><span>{{
               tool.elapsed !== undefined
                 ? tool.elapsed.toFixed(1) + "s"

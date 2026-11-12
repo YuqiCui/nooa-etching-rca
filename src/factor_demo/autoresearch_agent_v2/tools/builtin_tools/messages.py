@@ -1,14 +1,13 @@
-"""向用户输出最终结果的核心工具。"""
+"""向运行时提交当前工作的结束内容。"""
 
 
 def finish(content: str) -> str:
-    """打印最终结果，由 Agent loop 结束当前轮次。
+    """返回结束内容，由运行时决定投递给父会话还是用户。
 
     Args:
-        content: 要发送给用户的最终内容。
+        content: 当前工作的结果正文，格式由任务或 skill 决定。
 
     Returns:
-        已输出的最终内容。
+        尚待运行时路由的完整内容。
     """
-    print(content, flush=True)
     return content

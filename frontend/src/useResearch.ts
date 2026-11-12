@@ -78,24 +78,19 @@ export function useResearch() {
     ),
     activeTools = computed(
       () =>
-        s.tools.filter(
-          (t) =>
-            t.state === "running" && (t.agent_id || "main") === s.selectedAgent,
-        ).length,
+        s.tools.filter((t) => t.state === "running").length,
     );
   const visibleMessages = computed(() =>
     s.messages.filter((m) => (m.agent_id || "main") === s.selectedAgent),
   );
   const visibleCalls = computed(() =>
       s.calls
-        .filter((c) => (c.agent_id || "main") === s.selectedAgent)
-        .slice(-12)
+        .filter((c, index) => !c.ended || index >= s.calls.length - 12)
         .reverse(),
     ),
     visibleTools = computed(() =>
       s.tools
-        .filter((t) => (t.agent_id || "main") === s.selectedAgent)
-        .slice(-40)
+        .filter((t, index) => t.state === "running" || index >= s.tools.length - 40)
         .reverse(),
     );
   const selectedBranch = computed(() =>
@@ -156,7 +151,8 @@ export function useResearch() {
     if (!c) {
       c = { id, agent_id: agentId, thinking: "", content: "", ended: false };
       s.calls.push(c);
-      if(s.calls.length>60)s.calls.splice(0,s.calls.length-60);
+      if (s.calls.length > 60)
+        s.calls = s.calls.filter((c, index) => !c.ended || index >= s.calls.length - 60);
       c = s.calls.at(-1)!;
     }
     return c;

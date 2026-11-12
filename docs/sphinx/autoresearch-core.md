@@ -3,6 +3,19 @@
 `autoresearch_agent_v2` 的最小会话状态由
 `src/factor_demo/autoresearch_agent_v2/agent/typing.py` 中的 `SessionState` 定义。
 
+## 网页阶段性进展
+
+网页宿主为新版 Agent 挂载 `report_progress(content: str)`，只接收一个非空正文字符串。
+正文使用 Markdown，可直接包含表格、`artifacts/` 图片引用和文件链接。
+该工具通过现有 `reply.commit` 事件发布进展，前端将其显示在所属 Agent 的对话中。
+调用后继续执行当前任务，只有 `finish(content)` 提交最终结果并申请结束工作。
+
+研究模式和仅讨论模式均可汇报进展，仅讨论模式的文件及执行权限保持原有约束。
+子会话仅在获准使用 `report_progress` 时可调用，消息保留子 Agent 身份。
+工具说明随实际授权提供，不改变基础 Agent 的默认工具集合；独立脚本需由宿主另行挂载。
+消息随现有事件持久化并支持页面恢复，同一会话内相同工具调用标识更新同一条消息。
+这项能力在工具执行时发布完整正文，不提供逐字流式生成或长时间代码执行中的自动播报。
+
 ## 独立运行传感器特征分析
 
 `scripts/experiments/run_sensor_similarity.py` 使用核心 Agent 执行
@@ -212,8 +225,8 @@ Linux 命令构造检查与真实后端执行分开；在 macOS 上跳过 Landlo
 ## Task、Agent 与 Session
 
 一个 task 可以包含多个 session。每个 session 表示一个独立 agent 的对话，独立维护消息历史。
-同一 task 下的主 agent 和子 agent 共用一个 `workdir`，创建 session 时应传入相同的任务工作目录。
-`SessionState` 只记录该路径，不创建目录、不授予文件访问权限，也不负责跨 session 的目录一致性检查。
+同一 task 下的主 agent 和子 agent 使用独立的 `workdir`。通用运行时为每个子会话创建独占写目录，
+只读输入按宿主授权共享。`SessionState` 只记录路径，本身不授予文件访问权限。
 
 | 字段 | 含义 |
 |---|---|
@@ -221,7 +234,7 @@ Linux 命令构造检查与真实后端执行分开；在 macOS 上跳过 Landlo
 | `agent_id` | 本次对话所属 agent 的标识 |
 | `parent_agent_id` | 父 agent 的标识；无父 agent 时为 `None` |
 | `task_id` | 所属 task 的标识；多个 session 可以属于同一 task |
-| `workdir` | 同一 task 下各 agent 共享的工作目录，类型为 `Path` |
+| `workdir` | 当前会话独占的可写目录，类型为 `Path` |
 | `messages` | 按顺序保存的完整消息字典列表，默认为独立的空列表 |
 | `compaction` | 最近一次成功的摘要及其覆盖边界；默认为 `None`，随会话序列化恢复 |
 
@@ -248,9 +261,9 @@ AgentLoop 每次任务请求前检查输入 token，达到配置的百分比时�
 
 | 字段 | 默认值 | 含义 |
 |---|---|---|
-| `context_window_tokens` | `128000` | 会话的上下文 token 预算，按实际模型和服务限制设置 |
+| `context_window_tokens` | `172000` | 会话的上下文 token 预算，按实际模型和服务限制设置 |
 | `compact_trigger_percent` | `80` | 输入占预算的该百分比时触发，范围为大于 0、至多 100 |
-| `keep_recent_turns` | `1` | 压缩时保留的最近交互轮数；0 总结全部历史 |
+| `keep_recent_turns` | `2` | 压缩时保留的最近交互轮数；0 总结全部历史 |
 
 ```python
 from factor_demo.autoresearch_agent_v2.config import HistoryConfig
@@ -675,10 +688,45 @@ async with session:
 | `notebook__create_notebook` | 创建空文档，启动独立 kernel 并等待连接就绪 |
 | `notebook__list_notebooks` | 返回当前会话的数量、名称、连接状态、文件路径和 cell 数量 |
 | `notebook__write_new_cell` | 追加 cell，或使用 `after_cell_id` 插入到指定 cell 后 |
+| `notebook__write_cells` | 按传入顺序一次插入 1 至 100 个 cell，整体保存，不执行 |
 | `notebook__list_cells` | 按文档顺序列出稳定 cell ID、代码版本和执行状态 |
 | `notebook__read_cell` | 读取源码、版本和上次执行输出 |
 | `notebook__edit_cell` | 用 `expected_revision` 检查版本；以 `old_string`/`new_string` 局部替换，或用 `source` 整体替换 |
 | `notebook__exec_cell` | 用明确的 `revision` 执行当前版本并保存输出 |
+| `notebook__run_cells` | 按传入顺序执行 1 至 100 个明确版本的 cell，遇错停止 |
+
+批量写入和执行示例：
+
+```python
+written = await session.call("notebook__write_cells", {
+    "notebook_name": "数据探索",
+    "cells": [
+        {"source": "x = 40"},
+        {"source": "x += 2"},
+        {"source": "x"},
+    ],
+})
+result = await session.call("notebook__run_cells", {
+    "notebook_name": "数据探索",
+    "cells": written["cells"],
+    "timeout_s": 60,
+})
+```
+
+`write_cells` 的 `after_cell_id` 对整批生效；省略时追加到文档末尾。
+整批参数校验和插入定位完成后只保存一次，失败不部分写入。返回的 `cells`
+每项只含 `cell_id`、`revision`，可直接传给 `run_cells`。
+
+`run_cells` 执行前校验全部 cell 的存在性、类型和版本，任一不符则整批不执行。
+执行顺序是参数列表顺序，不自动排序或补跑依赖。`timeout_s` 是整批共用的预算，
+不能超过宿主上限；不是每个 cell 分别获得同样的时长。每个已执行 cell 单独保存，
+批次返回 `status`、`executed_count`（已保存执行结果项数）、`connected` 和逐项 `results`。
+Python 异常、超时、崩溃或执行期间的文件错误会停止后续项；未执行项使用
+`status='skipped'` 和 `reason`，不修改其旧输出。普通异常保留 kernel，
+正在执行的 cell 超时或崩溃会断开连接；两项之间预算耗尽时，空闲 kernel 保持连接。
+文件保存失败时，Python 代码可能已有副作用，先检查状态再决定是否重试。
+取消保留已完成结果，将当前 cell 标记为 `cancelled` 并继续传播，
+尚未开始的 cell 保持原状态。批量执行不回滚已发生的 Python 变量和文件变更。
 
 登记工具不会启动 kernel。`create_notebook` 成功返回时，Notebook 已连接；
 不需要额外 open 或 connect。所有已创建的连接跨 `finish` 和后续对话轮次保留，
@@ -742,7 +790,7 @@ async with session:
     await session.run("计算观测值的描述性统计。")
 ```
 
-`PythonTools` 自动提供上节的七个 `notebook__*` 工具，无需再登记 `NotebookTools`。
+`PythonTools` 自动提供上节的九个 `notebook__*` 工具，无需再登记 `NotebookTools`。
 此外只增加一个类发现入口，不提供 `python__execute` 或 `sandbox__run_python`：
 
 | 入口 | 行为 |
@@ -958,63 +1006,170 @@ Autoresearch Agent；选择数据集和模型，在“自主研究”中提交�
 保留，需要重新加载变量。“停止研究”取消当前任务并保存检查点；“仅讨论”限制为读取已有
 研究记录，不能执行分析或修改产物。该流程没有接入旧版 NOOA 的独立证据审查门禁。
 
-## 持续特征验证
+## 通用工具注册与授权
 
-Web 研究会话和 `run_sensor_similarity.py` 登记 `feature_analyze_verifier`。
-研究 Agent 提交 Notebook 标识、报告及相关产物位置；同一研究任务使用一个独立的
-verifier 会话，每份提交作为增量消息加入已有历史。进程恢复时从
-`verifier_runs/session.json` 恢复验证历史，从 `control.json` 恢复未完成交接、等待队列和待送反馈。
-验证会话不继承 Research Agent 的私有消息或 Notebook 活跃变量。
+内置工具位于 `autoresearch_agent_v2/tools/builtin_tools/`，提供文件、执行、会话委派、
+技能和通用文档能力。业务工具位于独立的 `factor_demo/business_tools/`，由应用显式注册。
+内核不扫描或自动导入业务包。
 
-```text
-feature_analyze_verifier(
-    notebook_name="本轮 Notebook",
-    report="问题、方法、特征集合、数据与产物位置、关键结果、证据和限制",
-    round_id="round-1"
+```python
+from factor_demo.autoresearch_agent_v2.agent import Session
+from factor_demo.autoresearch_agent_v2.tools.registry import ToolRegistry, register_builtin_tools
+from factor_demo.business_tools import register_business_tools
+
+registry = ToolRegistry()
+register_builtin_tools(registry)
+register_business_tools(registry)
+session = Session(model, state, tool_registry=registry, allow_tools="all")
+```
+
+`allow_tools` 默认为 `"all"`，表示本次已注册并获准使用的工具全集，不会发现未登记的能力。
+可传入明确工具名列表，或 provider 名，例如 `business:Statistics`。Python 业务方法使用
+`Statistics.summarize` 形式的标识。未知工具在启动前报错。
+
+授权同时作用于模型 Schema、工具说明、直接调用、Python 类文档和 Notebook 调用桥接。
+部分授权的 Python 类只开放获准方法。权限名单不代替执行沙箱，也不禁止 Notebook 自行
+使用已安装科学库；需要禁止代码执行时，应限制 Notebook 和 Shell 工具。
+
+当前循环通过 `finish` 结束分配的工作，所以有效工具集必须包含 `finish`。
+`allow_tools=[]` 或其他排除该工具的选择会在启动时失败，不会暗中重新加入工具。
+
+工具定义和授权集合在会话启动时冻结。注册只保存定义与工厂，获准工具需要的资源才实例化。
+`ToolRegistry` 按应用持有，Session 获得独立快照；后续注册不会修改已经构造的会话。
+
+## Skill 加载
+
+主子 agent 使用同一基础 system prompt 和同一 Session 内核。具体方法、角色分工、
+任务字段及结果模板来自 skill、用户请求和父任务，不固化在基础 prompt。
+
+框架没有默认启用的 Auto Research 业务 skill，也不预置固定科研流程。应用通过批准目录
+显式提供技能，再用 Session 的 `skills` 或父委派参数选择。技能目录句柄由宿主持有，
+不再使用该目录时可调用 `SkillRegistry.close()`；已冻结的会话正文不依赖部署文件继续存在。
+
+本项目 Web 入口批准 `knowledge/v2` 目录，在“自主研究”模式首次模型请求前自动加载
+`autoresearch`。子会话继承批准目录，父 Agent 可在 `agent__spawn` 中指定
+`skills=["research-executor"]`。新建的“仅讨论”会话不预加载研究技能；恢复已有会话时保留
+已冻结的技能快照，但仍使用只读讨论工具权限。目录句柄在该轮主、子会话清理后关闭，
+初始化失败、取消或异常退出同样会释放。
+
+```python
+from pathlib import Path
+from factor_demo.autoresearch_agent_v2.skills import SkillRegistry
+
+skills = SkillRegistry([Path("/approved/skills")])
+session = Session(
+    model,
+    state,
+    tool_registry=registry,
+    skill_registry=skills,
+    skills=["analysis"],
 )
 ```
 
-`round_id` 缺省使用 Notebook 名称。修订应复用原 `round_id`，提交仍有独立标识和
-Notebook 快照，原轮次的验证历史继续保留。
+批准根目录下的每个技能子目录包含 `SKILL.md`。YAML 头部使用 `name`、`description`、
+可选 `version` 和 `requires_tools`。技能 ID 使用子目录名；正文与引用资源必须为 UTF-8 文本。
+目录中拒绝符号链接，单个技能最多保留 128 个文本文件及 2 MiB 内容。
 
-### 非阻塞交接
+| 工具 | 参数 | 行为 |
+|---|---|---|
+| `skill__list` | 无 | 查看已批准目录与当前会话加载状态 |
+| `skill__load` | `skill_id` | 幂等加载正文，核对工具依赖，更新会话快照 |
+| `skill__read_resource` | `skill_id`, `path` | 读取已加载快照中的正文或参考文件 |
 
-提交立即返回 `submitted`；Research Agent 可继续研究。verifier 在后台串行验证，
-当前轮调用 `report` 前，新提交同样立即返回 `submitted`，输入与 Notebook 快照持久化后
-按提交顺序排队，无需重复提交。当前轮 `report` 完成并保存历史后，宿主自动投递队首提交。
-排队不会提前向 verifier 注入新消息，也不会打断当前验证；研究侧可查询队列长度及提交标识。
-相关产物仍在共享工作目录中，消息投递隔离不等于文件权限隔离。
+首次请求前直接加载 `skills` 中指定的技能，即使当前会话不获准调用技能发现或加载工具。
+之后每次请求通过上下文投影提供当前技能正文，不反复追加到消息历史。长参考资料按需读取，
+不随正文进入初始上下文。
 
-反馈在 Research Agent 后续模型请求前加入上下文，完整工具批次中的调用不会被打断。
-可调用 `feature_verifier_status()` 查询；需要反馈或准备结束研究时，调用
-`feature_verifier_status(wait=true)` 等待当前及排队提交全部处理完成。
-`retry=true` 在执行故障后继续原提交，再按序处理剩余队列。
-执行错误或取消记录为 `error` / `cancelled`，不冒充验证结论，也不投递下一份提交；新提交仍可入队，等待恢复。
-会话关闭时取消后台验证并保存历史，下一次恢复后可以继续原提交。
+`SessionState.skill_snapshots` 保存版本、正文、引用文件与内容哈希。恢复时校验内容完整性、
+当前目录授权及工具依赖，使用原快照，不静默替换为部署目录的新版本。技能加载不执行脚本，
+也不会扩大 `allow_tools` 或文件、网络和凭据权限。
 
-### 验证与验收
+## 并行子会话与 finish 路由
 
-verifier 原则上使用五折交叉验证，自主选择适合研究目标、数据依赖结构的模型、
-基线、指标和划分；不适合五折时必须解释依据和限制。验证重点是完整特征集合的
-预测价值、可复现性、泄漏及选择偏差，并提供单特征重要性和可比的历轮结果分析。
-原固定阈值程序不再作为运行时验收门槛。
+`AgentRuntime` 管理会话树、并发槽位、持久化队列与父收件箱。没有独立的 research agent
+或 verify agent 实现。每次委派创建通用 Session，使用独立历史、工具实例和执行目录。
 
-只有 `report(status, feedback)` 能结束验证轮次：
+```python
+from factor_demo.autoresearch_agent_v2.runtime import AgentRuntime, RuntimeLimits
 
-- `improved`：可靠、完整，且相对可比历史方案存在有证据的性能提升。
-- `regressed`：可靠、完整，但持平、退化或没有可确认提升；同样通过验收。
-- `needs_revision`：存在关键计算、方法、证据或完整性问题，需要原轮修订。
-- `blocked`：缺少数据、资源或执行条件。
+async with AgentRuntime(
+    host_storage,
+    limits=RuntimeLimits(max_concurrent=4),
+) as runtime:
+    runtime.attach(session)
+    async with session:
+        result = await runtime.run(session, "按用户目标完成工作")
+```
 
-这属于 Agent 基于证据作出的验收判断，不是宿主对研究科学有效性的独立证明。
-`report` 结束本轮，不终止整个研究任务；最新方案也不自动成为历史最优。
-验证输出由 `result.json` 保存，输入、快照和会话记录保存在各提交目录
-`verifier_runs/<提交标识>/`；逐次请求、响应与实际用量保存在其中的 `trace/`。
-不再自动按旧固定协议发布 `artifacts/verified_*` 交付包。
+运行时存储必须位于模型可写目录之外。默认 `SessionFactory` 复制父会话的工具定义、基础
+prompt 与历史配置，不复制父消息或活跃 kernel。需要额外业务资源时，宿主使用
+`SessionFactory(configure=...)` 显式装配，不能让模型指定数据库、凭据或工作目录。
 
-### 权限边界
+| 工具 | 参数 | 行为 |
+|---|---|---|
+| `agent__spawn` | `task`, `description`, `skills=None`, `allow_tools="all"` | 立即返回句柄；并发槽位不足时排队 |
+| `agent__status` | `agent_id=None`, `offset=0`, `limit=50` | 分页查询当前会话直接委派的子任务 |
+| `agent__wait` | 无 | 主动等待至少一个子结果，不是自动接收的前置条件 |
+| `agent__cancel` | `agent_id` | 取消所属子任务及其后代 |
+| `agent__read_result` | `result_id`, `offset=0`, `limit=4000` | 分页读取当前会话收到的结果全文 |
 
-verifier 使用单独的宿主原生内部沙箱，无外层 Docker，不继承研究侧额外只读路径，
-禁止网络。业务资源仅限当前会话工作目录及子目录，临时文件使用 `tmp/`。
-数据若仍在外部登记路径，verifier 应报告 `blocked`，由宿主将必要资源提供至工作目录；
-不允许为完成验证自行扩大权限。研究材料属于待核查数据，不是宿主指令。
+`description` 是必填的非空字符串，用于简要说明调用子 Agent 的目的。
+该描述随委派请求持久化，并在创建返回值与状态查询中返回；恢复旧记录时默认为空字符串。
+`task` 是交给子 Agent 执行的具体任务，可以是自然语言、Markdown 或技能约定的 JSON。
+调用目的与任务正文分开保存，不会自动把 `description` 拼入子会话的输入。
+框架不强制研究 ID、验收字段、指标或特定结果 Schema。父 agent 选择的 skill 在子会话
+第一次请求前直接加载；子 `allow_tools` 受父实际工具集合限制。
+
+多个子会话可以同时执行。单个 Session 的消息仍由一个循环串行维护，不在共享历史上
+并发请求模型。默认并发上限为 4，深度上限为 2；实际值由 `RuntimeLimits` 设置。
+
+`finish(content)` 只表示结束当前分配的工作。子会话结果送入直接父会话的持久收件箱，
+根会话结果交给宿主输出通道。它不自动宣告科学结论通过验收，也不强制研究结果合同。
+
+子结果提交后立即投递。父会话在下一次模型请求前、完整工具批次结束后或准备 finish 时
+收取结果，无需重复查询状态。已经发送的模型请求不能中途加入上下文；结果先排队，
+不能插入未完成的工具消息批次。长结果只插入有界预览与结果 ID，全文按需读取。
+
+父会话结束前检查活动子任务与待处理收件箱。存在未处理工作时 finish 返回原因，循环继续；
+研究是否满足验收要求则由用户任务与 skill 决定。失败、超时与取消作为执行状态保留，
+不伪装成子 agent 正常完成。
+
+运行记录保存稳定结果 ID 与收件箱事件 ID。会话检查点保留已消费标识，恢复时避免重复
+插入同一逻辑结果。取消沿会话树传播并清理执行资源；恢复不意味着旧 Notebook 内存存在。
+
+## 通用 JSON 文档
+
+`RecordTools` 提供与业务 Schema 无关的 JSON 文档访问。宿主显式指定存储目录，模型
+只能操作当前 `task_id` 与 `agent_id` 所属的文档，不能传入其他所有者或数据库路径。
+
+```python
+from factor_demo.autoresearch_agent_v2.tools.builtin_tools.records import RecordTools
+
+RecordTools.register(session, storage_root=host_storage / "records")
+```
+
+| 工具 | 参数 | 行为 |
+|---|---|---|
+| `record__get` | `document_id` | 返回内容与 revision；不存在时 document 为 null |
+| `record__put` | `document_id`, `content`, `expected_revision` | 完整替换 JSON；版本 0 仅创建新文档 |
+
+内容允许任意合法 JSON 根值，不固定研究字段。SQLite 短事务负责跨进程条件写入，版本冲突
+返回 `revision_conflict`，已有文档不被覆盖。存储位于模型可写工作目录之外；整组工具被
+排除时不会创建数据库。关闭会话后，旧工具引用不能继续访问。
+
+主 agent 可以按 skill 或用户约定维护 `research.json`。研究目标、证据、验收和后续方向的
+字段属于应用约定；运行队列、投递确认和执行状态由通用运行时另行保存。
+
+## 历史 verifier 的替代
+
+旧 `feature_verifier/` 专用 Agent、`VERIFIER_PROMPT`、`feature_analyze_verifier` 和
+`feature_verifier_status` 已退出核心架构。需要复核时，父 agent 下发新任务并选择适当 skill，
+通过同一个通用委派工具运行，结果由 finish 返回。技能或用户可以约定复核格式，内核
+不固定五折验证、性能改善状态或研究验收规则。
+
+旧运行目录可保留为历史资料，不恢复已删除的专用 Agent 类。纯评估函数的历史保留与业务
+工具迁移不改变科学算法，也不把可重跑或模型审查当作物理因果证明。
+
+回归检查覆盖 `tests/test_tool_registry.py`、`tests/test_v2_skills.py`、
+`tests/test_record_tools.py` 与通用运行时测试。测试使用模拟模型及真实异步调度、文件和
+SQLite 存储，不构成真实模型研究质量或 token 节省率的测量。

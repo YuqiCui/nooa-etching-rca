@@ -17,6 +17,9 @@ if TYPE_CHECKING:
 class SandboxTools:
     """同一会话的执行工具共用一个具有固定权限的 Sandbox。"""
 
+    tool_names: ClassVar[tuple[str, ...]] = ("sandbox__run_shell",)
+    """启动前可检查的公开工具名称。"""
+
     namespace: ClassVar[str] = "sandbox"
     """Shell 工具使用的名称前缀。"""
 
@@ -44,7 +47,10 @@ class SandboxTools:
         bound_config = config or SandboxConfig(workdir=session.state.workdir)
         cls._check_workdir(session, bound_config)
 
-        session.register_resource(Sandbox, partial(cls.create_sandbox, config=bound_config))
+        session.register_resource(
+            Sandbox, partial(cls.create_sandbox, config=bound_config),
+            eager=False, when_tools=cls.tool_names,
+        )
         session.register_stateful_tool(cls)
 
     @classmethod

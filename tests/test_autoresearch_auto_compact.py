@@ -70,7 +70,7 @@ def test_threshold_uses_config_and_actual_request_before_completion(
     session = make_session(
         tmp_path,
         messages=deepcopy(original),
-        history_config=HistoryConfig(context_window_tokens=10_000, compact_trigger_percent=percent),
+        history_config=HistoryConfig(context_window_tokens=10_000, compact_trigger_percent=percent, keep_recent_turns=1),
     )
     session.register_dataset("样本", "sample.csv", "登记数据集用于分析")
 
@@ -119,7 +119,7 @@ def test_threshold_uses_config_and_actual_request_before_completion(
 def test_single_user_task_compacts_repeatedly_between_complete_tool_batches(tmp_path, monkeypatch):
     session = make_session(
         tmp_path,
-        history_config=HistoryConfig(context_window_tokens=10_000),
+        history_config=HistoryConfig(context_window_tokens=10_000, keep_recent_turns=1),
     )
     executed = []
     summaries = []
@@ -207,7 +207,7 @@ def test_manual_compact_uses_configured_retention_with_per_call_override(
 
 @pytest.mark.parametrize("tokens", [8500, 10_000])
 def test_uncompactable_input_does_not_repeat_compaction_requests(tmp_path, monkeypatch, tokens):
-    session = make_session(tmp_path, history_config=HistoryConfig(context_window_tokens=10_000))
+    session = make_session(tmp_path, history_config=HistoryConfig(context_window_tokens=10_000, keep_recent_turns=1))
     requests = []
     monkeypatch.setattr(litellm, "token_counter", lambda **kwargs: tokens)
 
@@ -235,7 +235,7 @@ def test_failed_automatic_compaction_stops_before_task_request(tmp_path, monkeyp
     session = make_session(
         tmp_path,
         messages=[{"role": "user", "content": "历史 " * 1000}],
-        history_config=HistoryConfig(context_window_tokens=10_000),
+        history_config=HistoryConfig(context_window_tokens=10_000, keep_recent_turns=1),
     )
     monkeypatch.setattr(litellm, "token_counter", lambda **kwargs: 8000)
     requests = []

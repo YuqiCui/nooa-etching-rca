@@ -57,6 +57,7 @@ simulation
 
 agents
 autoresearch-core
+autoresearch-v2-research-redesign
 execution-feedback
 code-buffers
 algorithms

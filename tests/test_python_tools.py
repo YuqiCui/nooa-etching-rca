@@ -18,17 +18,27 @@ from factor_demo.autoresearch_agent_v2.agent import Session, SessionState
 from factor_demo.autoresearch_agent_v2.agent.model import Model
 from factor_demo.autoresearch_agent_v2.config import ModelConfig
 from factor_demo.autoresearch_agent_v2.python_tools import PythonTool, PythonTools
-from factor_demo.autoresearch_agent_v2.python_tools.builtin_tools.statistics import Statistics
 from factor_demo.autoresearch_agent_v2.python_tools.rendering import render_class_documentation
 from factor_demo.autoresearch_agent_v2.python_tools.schema import ToolMethod
 from factor_demo.autoresearch_agent_v2.python_tools.typing import ClassDetails, MethodDetails
 from factor_demo.autoresearch_agent_v2.sandboxing import Sandbox, SandboxConfig
+from factor_demo.autoresearch_agent_v2.tools.registry import ToolRegistry
+from factor_demo.business_tools import register_business_tools
+from factor_demo.business_tools.statistics import Statistics
 
 
 def make_session(workdir, identity="main"):
     """创建使用占位模型的会话，不请求真实模型。"""
     state = SessionState(session_id=identity, agent_id=identity, task_id="task", workdir=workdir)
-    session = Session(Model(ModelConfig(model="openai/fixture", api_key="fixture")), state)
+    registry = ToolRegistry()
+    register_business_tools(registry)
+    for name, tool_type in PythonTool.registered().items():
+        registry.register_python(name, tool_type, methods=tool_type.tool_methods)
+    session = Session(
+        Model(ModelConfig(model="openai/fixture", api_key="fixture")),
+        state,
+        tool_registry=registry,
+    )
     session.register_stateful_tool(PythonTools)
     return session
 
@@ -96,6 +106,8 @@ def counter_tool(monkeypatch):
             invalid_result：演示返回值校验。
             wait：等待异步操作完成。
         """
+
+        tool_methods = ("add", "read", "fail", "invalid_result", "wait")
 
         def __init__(self):
             """初始化属于本实例的状态。"""
@@ -179,14 +191,14 @@ def counter_tool(monkeypatch):
     return Counter, instances, events
 
 
-def test_builtin_catalog_loads_on_import_in_a_fresh_process():
+def test_core_import_does_not_load_business_tools_in_a_fresh_process():
     result = subprocess.run(
         [
             sys.executable,
             "-c",
             (
                 "from factor_demo.autoresearch_agent_v2.python_tools import PythonTool; "
-                "assert 'Statistics' in PythonTool.registered()"
+                "assert 'Statistics' not in PythonTool.registered()"
             ),
         ],
         capture_output=True,
@@ -217,10 +229,12 @@ def test_catalog_is_class_docstrings_only_and_instances_are_lazy(tmp_path, count
                 "notebook__create_notebook",
                 "notebook__list_notebooks",
                 "notebook__write_new_cell",
+                "notebook__write_cells",
                 "notebook__list_cells",
                 "notebook__read_cell",
                 "notebook__edit_cell",
                 "notebook__exec_cell",
+                "notebook__run_cells",
             }
             with pytest.raises(KeyError):
                 await session.call("python__execute", {"code": "print(1)"})
@@ -535,6 +549,8 @@ def test_failed_details_roll_back_instance_and_never_unlock_class(tmp_path, coun
     @PythonTool.register("Broken")
     class Broken(counter):
         """演示公开方法文档不合格时的加载回滚。"""
+
+        tool_methods = ("broken",)
 
         def methods(self):
             """将无类型声明的方法放入公开清单。"""

@@ -38,11 +38,10 @@ class ExecutionObservations:
         return doc
 
     def children(self, identity):
-        with self.connect() as db:
-            rows = [
-                json.loads(r[0]) for r in db.execute("SELECT doc FROM observations ORDER BY rowid")
-            ]
-        return [row for row in rows if row.get("parent_id") == identity]
+        """通过存储服务按创建顺序读取直接子记录，避免业务层直接查询数据库。"""
+        return [
+            row for row in reversed(self._storage.list()) if row.get("parent_id") == identity
+        ]
 
     def resolve(self, failure, verification):
         self._storage.resolve(failure, verification)

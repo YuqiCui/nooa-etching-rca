@@ -9,6 +9,7 @@ from factor_demo.autoresearch_agent_v2.agent import Session, SessionState
 from factor_demo.autoresearch_agent_v2.agent.model import Model
 from factor_demo.autoresearch_agent_v2.config import ModelConfig
 from factor_demo.autoresearch_agent_v2.python_tools import PythonTool, PythonTools
+from factor_demo.autoresearch_agent_v2.tools.registry import ToolRegistry
 
 
 def make_session(tmp_path, **options):
@@ -52,7 +53,9 @@ def test_startup_prints_effective_prompt_and_bound_catalog(tmp_path, monkeypatch
         }
 
     monkeypatch.setattr(Model, "completion", completion)
-    session = make_session(tmp_path, system_prompt="自定义系统提示")
+    registry = ToolRegistry()
+    registry.register_python("LazyTool", LazyTool, methods=("read",))
+    session = make_session(tmp_path, system_prompt="自定义系统提示", tool_registry=registry)
     session.register_dataset("样本", "data/sample.parquet", "逐片观测")
     session.register_stateful_tool(PythonTools)
     session.loop.tools.add_instructions("额外工具说明")

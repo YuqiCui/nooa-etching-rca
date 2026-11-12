@@ -256,6 +256,18 @@ def test_nooa_audit_is_readonly_and_does_not_create_missing_database(tmp_path):
     assert path.read_bytes() == before
 
 
+def test_observation_children_keep_creation_order_through_public_storage(tmp_path):
+    """子记录查询保留原顺序，并排除其他父记录，不依赖应用层 SQL。"""
+    from factor_demo.execution_observations import ExecutionObservations
+
+    observations = ExecutionObservations(tmp_path)
+    for identity, parent in (("first", "parent"), ("other", "unrelated"), ("last", "parent")):
+        observations.save({"observation_id": identity, "parent_id": parent})
+    assert [row["observation_id"] for row in observations.children("parent")] == [
+        "first", "last",
+    ]
+
+
 def test_application_cannot_import_storage_internals_or_embed_sql():
     root = Path(__file__).parents[1] / "src/factor_demo"
     database = root / "autoresearch_agent_v2/database"

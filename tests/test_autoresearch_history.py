@@ -77,7 +77,7 @@ def test_compact_preserves_archive_and_replays_summary_with_complete_recent_turn
         )
 
     monkeypatch.setattr(litellm, "acompletion", complete)
-    assert asyncio.run(compact_history(state, make_model(), system_prompt="当前工具说明"))
+    assert asyncio.run(compact_history(state, make_model(), system_prompt="当前工具说明", keep_recent_turns=1))
     assert state.get_messages() == original
     assert state.compaction.end_index == 3
     assert requests[0]["messages"][0]["content"] == COMPACT_PROMPT
@@ -125,10 +125,10 @@ def test_repeated_compaction_merges_previous_summary_and_only_new_prefix(tmp_pat
     model = make_model()
 
     async def run():
-        assert await compact_history(state, model, system_prompt="系统")
-        assert not await compact_history(state, model, system_prompt="系统")
+        assert await compact_history(state, model, system_prompt="系统", keep_recent_turns=1)
+        assert not await compact_history(state, model, system_prompt="系统", keep_recent_turns=1)
         state.messages.append({"role": "user", "content": "继续检查第三轮"})
-        assert await compact_history(state, model, system_prompt="系统")
+        assert await compact_history(state, model, system_prompt="系统", keep_recent_turns=1)
 
     asyncio.run(run())
     material = json.loads(requests[1]["messages"][1]["content"])["history"]
@@ -157,7 +157,7 @@ def test_invalid_or_failed_compaction_preserves_previous_checkpoint(tmp_path, mo
 
     monkeypatch.setattr(litellm, "acompletion", complete)
     model = make_model()
-    assert asyncio.run(compact_history(state, model, system_prompt="系统"))
+    assert asyncio.run(compact_history(state, model, system_prompt="系统", keep_recent_turns=1))
     before = state.model_dump_json()
 
     async def fail(**kwargs):
@@ -233,7 +233,7 @@ def test_concurrent_history_change_does_not_publish_stale_summary(tmp_path, monk
 
     monkeypatch.setattr(litellm, "acompletion", complete)
     with pytest.raises(RuntimeError, match="历史已改变"):
-        asyncio.run(compact_history(state, make_model(), system_prompt="系统"))
+        asyncio.run(compact_history(state, make_model(), system_prompt="系统", keep_recent_turns=1))
     assert state.compaction is None
     assert state.messages[-1]["content"] == "并发补充"
 

@@ -90,6 +90,9 @@ def _match_details(text: str, needle: str) -> tuple[int, list[int]]:
 class FileTools:
     """同一会话共享读取记录，并在关闭时撤销文件访问。"""
 
+    tool_names: ClassVar[tuple[str, ...]] = ("read_file", "write_file", "edit_file")
+    """启动前可检查的公开工具名称。"""
+
     namespace: ClassVar[str] = "files"
     """会话工具组标识；模型工具保留 read_file 等无前缀名称。"""
 

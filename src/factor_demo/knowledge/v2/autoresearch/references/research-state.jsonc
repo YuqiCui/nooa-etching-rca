@@ -1,0 +1,167 @@
+{
+  // string：总体研究目标。
+  "goal": "总体研究目标",
+
+  // string：数据范围、版本、对象粒度、单位和已知限制。
+  "data_summary": "已核对的数据概况",
+
+  // object[]：研究项；尚未立项时为 []。
+  "researches": [
+    {
+      // string：研究 ID，在当前文档内唯一且稳定。
+      "id": "R001",
+
+      // string：本项研究要回答的问题。
+      "goal": "本项研究目标",
+
+      // object[]：待检验的候选解释或主张。
+      "hypotheses": [
+        {
+          // string：假设 ID，在本研究内唯一。
+          "id": "H1",
+
+          // string：main 主要解释；alternative 替代解释；
+          // artifact 数据或方法伪差；robustness 稳健性主张。
+          "role": "main",
+
+          // string：可检验的主张，包含适用对象和条件。
+          "claim": "待检验的候选解释"
+        }
+      ],
+
+      // object[]：检查计划，每项检查通过 id 与执行结果关联。
+      "validation_plan": [
+        {
+          // string：检查 ID，在本研究内唯一。
+          "id": "V001",
+
+          // string[]：关联本研究 hypotheses[].id。
+          // 准备性检查可以为 []。
+          "hypothesis_ids": ["H1"],
+
+          // string：要区分的解释或要补足的证据缺口。
+          "purpose": "本检查要解决的问题",
+
+          // string[]：输入名称、版本或可解析引用。
+          "inputs": ["输入数据及版本"],
+
+          // string：对象范围、分析单位、纳入排除条件和比较条件。
+          "scope": "本检查的对象范围和比较条件",
+
+          // string：检查方法或方法协议引用。
+          "method": "本检查采用的方法",
+
+          // object<string, string>：键与 hypothesis_ids 一致。
+          // 值说明支持、削弱、反证和仍不足以判断的结果条件。
+          // 准备性检查可为 {}，完成标准放在 purpose 和 deliverables。
+          "decision_criteria": {
+            "H1": "支持该解释的结果条件；削弱或反证的结果条件；仍不足以判断的情形"
+          },
+
+          // string[]：依赖的检查 ID，无依赖时为 []。
+          // 本研究使用 V001，跨研究使用 R001/V001；引用应存在且无循环。
+          "depends_on": [],
+
+          // string[]：预期交回的材料类型或约定位置。
+          // 与结果中的 evidence_paths 区分，此处不表示材料已经生成。
+          "deliverables": ["指标结果", "代码或方法", "执行记录"]
+        }
+      ],
+
+      // string：研究工作状态。
+      // planned 已计划；in_progress 执行或修订中；
+      // completed 必要检查与材料已完成；failed 执行失败；blocked 缺少必要条件。
+      // 工作完成不等于假设得到支持，也不等于验收通过。
+      "status": "planned",
+
+      // null | object：尚无结果时为 null；以下展开结果对象的完整结构。
+      "result": {
+        // string：本研究的当前结论、适用范围及未完成事项。
+        "summary": "尚未形成结论",
+
+        // object[]：逐项检查的当前执行结果；尚无条目时为 []。
+        "validation_results": [
+          {
+            // string：对应本研究 validation_plan[].id。
+            // 同一检查只保留一条当前结果。
+            "validation_id": "V001",
+
+            // string：检查执行状态。
+            // pending 未开始；in_progress 执行中；completed 已完成并返回材料；
+            // failed 执行失败；blocked 缺少必要条件；skipped 未执行。
+            "status": "pending",
+
+            // string：实际检查内容、关键结果与单位、失败或未执行原因。
+            "summary": "检查尚未开始",
+
+            // string[]：本检查实际生成的证据路径或可解析引用。
+            // 无材料时为 []，不填写预期路径。
+            "evidence_paths": [],
+
+            // string[]，可选：执行相对计划的偏差及其影响。
+            "deviations": []
+          }
+        ],
+
+        // object[]：逐项假设的当前判定；完整结果覆盖全部假设。
+        "hypothesis_results": [
+          {
+            // string：对应本研究 hypotheses[].id。
+            "id": "H1",
+
+            // string：假设判定。
+            // supported 达到支持标准；weakened 被证据削弱；
+            // not_supported 有效检查未达到支持标准；refuted 存在直接反证；
+            // inconclusive 未检验、证据不足或无法可靠区分。
+            "verdict": "inconclusive",
+
+            // string[]：判定依据的检查 ID，对应 validation_results[].validation_id。
+            // 尚无相关结果时为 []，不能仅引用计划冒充证据。
+            "validation_ids": [],
+
+            // string：判定理由，以及相关反证和证据缺口。
+            "reason": "尚无有效检查结果"
+          }
+        ],
+
+        // null | string：实际生成的报告路径或可解析引用；没有报告时为 null。
+        "report_path": null,
+
+        // string[]：本研究已有证据引用的汇总；无材料时为 []。
+        "evidence_paths": [],
+
+        // string[]：数据、方法、适用范围、反证和未解决问题；没有时为 []。
+        "limitations": [],
+
+        // object[]：后续研究建议；无建议时为 []。
+        // 建议条目不代表已经创建 research 或开始执行。
+        "next_proposals": [
+          {
+            // string：建议研究的目标。
+            "goal": "后续研究目标",
+
+            // string：建议检验的假设。
+            "hypothesis": "后续候选解释",
+
+            // string：建议的证据依据或价值。
+            "reason": "提出该建议的原因"
+          }
+        ]
+      },
+
+      // object：主 agent 的验收记录，与研究和检查的执行状态分别保存。
+      "review": {
+        // string：pending 待验收；accepted 验收通过；
+        // needs_revision 需要修订；blocked 无法完成验收。
+        "status": "pending",
+
+        // string：验收依据、具体问题或阻塞原因；初始为 ""。
+        "feedback": ""
+      },
+
+      // array，可选：修订原因、旧计划、旧结果和旧验收，或其可读引用。
+      // 这里只存历史版本，当前版本仍位于上述对应字段。
+      "history": []
+    }
+  ]
+}

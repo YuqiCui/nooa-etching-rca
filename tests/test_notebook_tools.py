@@ -65,10 +65,12 @@ def test_schema_uses_names_and_registration_does_not_start_kernels(tmp_path):
                 "notebook__create_notebook",
                 "notebook__list_notebooks",
                 "notebook__write_new_cell",
+                "notebook__write_cells",
                 "notebook__list_cells",
                 "notebook__read_cell",
                 "notebook__edit_cell",
                 "notebook__exec_cell",
+                "notebook__run_cells",
             }
             for name, parameters in schemas.items():
                 assert "notebook_id" not in parameters["properties"]

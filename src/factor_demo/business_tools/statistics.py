@@ -1,4 +1,4 @@
-"""提供可实际执行的内置统计工具。"""
+"""提供可显式注册的统计业务工具。"""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from math import isfinite
 from statistics import fmean, median, pstdev
 from typing import Any
 
-from ..base import PythonTool
+from factor_demo.autoresearch_agent_v2.python_tools.base import PythonTool
 
 
 def _validate_values(values: list[float], minimum_count: int) -> None:
@@ -16,7 +16,6 @@ def _validate_values(values: list[float], minimum_count: int) -> None:
         raise ValueError(f"至少需要 {minimum_count} 个有限数值，不能包含 NaN 或无穷值。")
 
 
-@PythonTool.register("Statistics")
 class Statistics(PythonTool):
     """对数值观测进行描述性统计和相关分析。
 
@@ -24,6 +23,9 @@ class Statistics(PythonTool):
         summarize：计算数量、均值、中位数、极值和标准差。
         pearson_correlation：计算配对观测的 Pearson 相关系数及检验结果。
     """
+
+    tool_methods = ("summarize", "pearson_correlation")
+    """静态声明公开方法，注册时不构造实例。"""
 
     def methods(self) -> dict[str, Callable[..., Any]]:
         """声明允许模型使用的统计方法。

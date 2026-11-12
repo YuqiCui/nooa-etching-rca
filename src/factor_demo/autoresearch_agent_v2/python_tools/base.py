@@ -33,29 +33,12 @@ class PythonTool(ABC):
             ValueError: 名称无效、重复或类没有独立编写的文档字符串。
             TypeError: 实现不是当前工具基类的具体子类。
         """
-        from inspect import isabstract
-        from keyword import iskeyword
 
         def register_tool(candidate: type[ToolT]) -> type[ToolT]:
-            """检查名称和实现后保存类，不执行构造函数。"""
-            if (
-                not name.isidentifier()
-                or not name.isascii()
-                or name.startswith("_")
-                or iskeyword(name)
-                or name in {"print", "input", "__builtins__"}
-            ):
-                raise ValueError(f"无效的 Python 工具类名：{name!r}")
+            """兼容旧定义目录；只有显式加入 ToolRegistry 后才激活。"""
+            validate_tool_definition(name, candidate)
             if name in cls._registry:
                 raise ValueError(f"Python 工具类已经注册：{name}")
-            if (
-                not isinstance(candidate, type)
-                or not issubclass(candidate, cls)
-                or isabstract(candidate)
-            ):
-                raise TypeError("Python 工具必须是 PythonTool 的具体子类。")
-            if not candidate.__doc__ or not candidate.__doc__.strip():
-                raise ValueError("Python 工具类必须编写功能和方法概览。")
             cls._registry[name] = candidate
             return candidate
 
@@ -91,3 +74,26 @@ class PythonTool(ABC):
             Python 方法名到当前实例绑定方法的映射。
         """
         raise NotImplementedError
+
+
+def validate_tool_definition(name: str, candidate: type[PythonTool]) -> None:
+    """验证 Python 工具类型，不构造实例或运行其业务方法。"""
+    from inspect import isabstract
+    from keyword import iskeyword
+
+    if (
+        not name.isidentifier()
+        or not name.isascii()
+        or name.startswith("_")
+        or iskeyword(name)
+        or name in {"print", "input", "__builtins__"}
+    ):
+        raise ValueError(f"无效的 Python 工具类名：{name!r}")
+    if (
+        not isinstance(candidate, type)
+        or not issubclass(candidate, PythonTool)
+        or isabstract(candidate)
+    ):
+        raise TypeError("Python 工具必须是 PythonTool 的具体子类。")
+    if not candidate.__doc__ or not candidate.__doc__.strip():
+        raise ValueError("Python 工具类必须编写功能和方法概览。")

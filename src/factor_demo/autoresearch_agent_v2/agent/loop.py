@@ -2,6 +2,7 @@
 
 import json
 import logging
+from collections.abc import Awaitable, Callable
 
 from ..config import HistoryConfig
 from ..tools import create_tool_factory
@@ -40,6 +41,8 @@ class AgentLoop:
         self.tools = create_tool_factory()
         self.terminal_tool = "finish"
         self.history_config = history_config if history_config is not None else HistoryConfig()
+        self.context_providers: list[Callable[[], str]] = []
+        self.finish_hook: Callable[[str], Awaitable[bool]] | None = None
 
     async def before_run_hook(self, content: str) -> str:
         """在写入用户输入前执行钩子，默认原样返回。
@@ -72,6 +75,7 @@ class AgentLoop:
                 self.system_prompt,
                 dataset_prompt(self.session),
                 self.tools.instructions(),
+                *(provider() for provider in self.context_providers),
             )
             if part
         )
@@ -160,17 +164,16 @@ class AgentLoop:
                     except Exception as error:  # noqa: BLE001 - 工具错误统一回传，控制信号继续传播。
                         result = f"{type(error).__name__}: {error}"
                         failed = True
-                    self.session.messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tool_call["id"],
-                            "content": protect_tool_result(
-                                result,
-                                self.session.workdir / "tool_results",
-                                workspace_root=self.session.workdir,
-                            ),
-                        }
-                    )
+                    result_message = {
+                        "role": "tool",
+                        "tool_call_id": tool_call["id"],
+                        "content": protect_tool_result(
+                            result,
+                            self.session.workdir / "tool_results",
+                            workspace_root=self.session.workdir,
+                        ),
+                    }
+                    self.session.messages.append(result_message)
                     if function["name"] == self.terminal_tool and not failed:
                         for skipped_call in tool_calls[index + 1 :]:
                             self.session.messages.append(
@@ -180,6 +183,11 @@ class AgentLoop:
                                     "content": f"未执行：{self.terminal_tool} 已结束本轮。",
                                 }
                             )
-                        return result
+                        if self.finish_hook is None or await self.finish_hook(result):
+                            return result
+                        result_message["content"] = (
+                            "当前工作尚未结束：请先处理宿主投递的结果或仍在运行的子任务。"
+                        )
+                        break
         finally:
             await self.after_run_hook()

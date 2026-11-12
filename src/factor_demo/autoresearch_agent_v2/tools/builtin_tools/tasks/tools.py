@@ -20,6 +20,9 @@ if TYPE_CHECKING:
 class TaskTools:
     """显式登记存储根目录，模型只能操作当前研究任务中的工作项。"""
 
+    tool_names: ClassVar[tuple[str, ...]] = ("task_create", "task_get", "task_update", "task_list")
+    """启动前可检查的公开工具名称。"""
+
     namespace: ClassVar[str] = "task"
     """会话内工具组标识；公开工具名固定使用 task_ 前缀。"""
 
@@ -66,7 +69,7 @@ class TaskTools:
             finally:
                 service.close()
 
-        session.register_resource(TaskPlanService, create_service)
+        session.register_resource(TaskPlanService, create_service, eager=False)
         session.register_stateful_tool(cls)
 
     @classmethod
@@ -80,9 +83,8 @@ class TaskTools:
         Yields:
             当前会话专属的工作项工具。
         """
-        instance = cls(
-            session.resource(TaskPlanService), session.state.session_id, session.state.agent_id
-        )
+        service = await session.bind_resource(TaskPlanService, _require_registered_service)
+        instance = cls(service, session.state.session_id, session.state.agent_id)
         try:
             yield instance
         finally:
@@ -144,3 +146,8 @@ class TaskTools:
             )
 
         return invoke
+
+
+def _require_registered_service(session):
+    """没有宿主配置时拒绝创建默认存储，避免猜测授权位置。"""
+    raise RuntimeError("TaskTools 必须先通过 register 配置宿主存储")

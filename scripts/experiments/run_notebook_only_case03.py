@@ -23,12 +23,12 @@ parser.add_argument("--run-dir", type=Path, required=True)
 parser.add_argument("--preflight", action="store_true")
 parser.add_argument("--reasoning-effort", default="medium", choices=["low", "medium", "high", "max"])
 parser.add_argument("--timeout", type=float, default=7200, help="整次研究时限，单位秒")
-parser.add_argument("--with-verifier", action="store_true", help="使用当前代码和提示词联动验证器")
+parser.add_argument("--current-code", action="store_true", help="使用当前通用 Agent 代码与提示词")
 ARGS = parser.parse_args()
 ROOT = ARGS.run_dir.resolve()
 ROOT.mkdir(parents=True, exist_ok=True)
 if not (ROOT / "source").exists():
-    if ARGS.with_verifier:
+    if ARGS.current_code:
         shutil.copytree(PROJECT / "src/factor_demo", ROOT / "source/factor_demo",
                         ignore=shutil.ignore_patterns("__pycache__", ".DS_Store"))
     else:
@@ -46,12 +46,8 @@ from factor_demo.autoresearch_agent_v2.sandboxing import Sandbox, SandboxConfig
 from factor_demo.autoresearch_agent_v2.tools import FileTools, SandboxTools, TaskTools
 from factor_demo.providers import load_provider
 
-if ARGS.with_verifier:
-    from factor_demo.autoresearch_agent_v2.feature_verifier import FeatureAnalyzeVerifier
-    from factor_demo.autoresearch_agent_v2.feature_verifier.prompts import VERIFIER_PROMPT
-
 WORK = ROOT / "workspace"
-PROMPT = (SYSTEM_PROMPT if ARGS.with_verifier else
+PROMPT = (SYSTEM_PROMPT if ARGS.current_code else
           (PROJECT / "configs/experiments/notebook_only_system_prompt.txt").read_text())
 
 
@@ -87,8 +83,6 @@ def register(session, workdir, tasks=True):
         TaskTools.register(session, storage_root=ROOT / "task_storage")
     session.register_stateful_tool(FileTools)
     session.register_stateful_tool(PythonTools)
-    if ARGS.with_verifier:
-        session.register_stateful_tool(FeatureAnalyzeVerifier)
 
 
 async def preflight():
@@ -180,8 +174,6 @@ async def run():
         str(WORK / "input"),
         "固定配方加工的三个业务时段、同期参考腔、原始时序与统计特征；先检查数据结构。",
     )
-    if ARGS.with_verifier:
-        (ROOT / "effective_verifier_prompt.txt").write_text(VERIFIER_PROMPT)
     save("run_config.json", config.model_dump(mode="json", exclude={"api_key", "base_url"}))
     status = {
         "status": "running",
@@ -230,16 +222,16 @@ if __name__ == "__main__":
             {
                 "baseline": str(BASELINE),
                 "case": "case_03",
-                "source": "current source snapshot" if ARGS.with_verifier else "baseline frozen snapshot",
-                "with_verifier": ARGS.with_verifier,
+                "source": "current source snapshot" if ARGS.current_code else "baseline frozen snapshot",
+                "current_code": ARGS.current_code,
                 "outer_docker": False,
                 "execution_backend": "macos",
                 "disabled_tools": ["sandbox__run_shell"],
-                "prompt": ("current SYSTEM_PROMPT + verifier instructions" if ARGS.with_verifier else
+                "prompt": ("current generic SYSTEM_PROMPT" if ARGS.current_code else
                            str(PROJECT / "configs/experiments/notebook_only_system_prompt.txt")),
                 "input_file_count": len(hashes),
                 "all_input_hashes_match": True,
-                "limitations": ["单次联动测试，不作为与历史运行的受控比较。"] if ARGS.with_verifier
+                "limitations": ["单次联动测试，不作为与历史运行的受控比较。"] if ARGS.current_code
                 else ["单次运行；提示词和工具可用性共同变化，不能单独归因。"],
             },
         )
