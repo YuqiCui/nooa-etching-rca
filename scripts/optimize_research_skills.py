@@ -31,8 +31,8 @@ SKILLS = {
 CONTEXT = (
     "src/factor_demo/knowledge/v2/autoresearch/references/research-state.jsonc",
     "src/factor_demo/autoresearch_agent_v2/agent/prompts.py",
-    "src/factor_demo/autoresearch_agent_v2/tools/builtin_tools/agents/tools.py",
-    "src/factor_demo/autoresearch_agent_v2/tools/builtin_tools/records/tools.py",
+    "src/factor_demo/autoresearch_agent_v2/tools/builtin_tools/workers/tools.py",
+    "src/factor_demo/autoresearch_agent_v2/tools/builtin_tools/files/tools.py",
     "src/factor_demo/autoresearch_agent_v2/tools/builtin_tools/messages.py",
 )
 SYSTEM_PROMPT = """联合精简两个中文 Agent SKILL.md，优化表达，删除强 LLM 已知的常识与重复，查缺补漏。
@@ -44,7 +44,7 @@ SYSTEM_PROMPT = """联合精简两个中文 Agent SKILL.md，优化表达，删�
 两者分别加载，应各自保有必需的交接约定。不要编造工具、权限、字段硬要求或自动校验能力。
 
 压缩时保留：稳定 ID 与计划/结果关联；执行、支持和验收分离；主会话单写入者；部分返回及失败/漏项；
-修订保留历史并重置受影响判定；记录条件写入、冲突重读合并；父会话可读取的证据；停止和交付；
+修订保留历史并重置受影响判定；研究 JSON 文件保存、更新前读取与变更后合并；父会话可读取的证据；停止和交付；
 原有无委派/无持久化能力的降级方式。保留开放探索，不把流程收窄为固定统计测试。
 查缺补漏只补足会破坏现有流程的缺口，如修订计划分配新检查 ID 以区分迟到旧结果、子结果漏项或
 依赖失败的处理。不要把潜在问题全部写成强制流程，不加新的研究方法论段落。

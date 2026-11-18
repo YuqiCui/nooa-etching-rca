@@ -7,6 +7,14 @@
   "summary_threshold": null,
   "preserve_recent": 10,
   "summary_target_chars": 8000,
-  "request_timeout": 1800,
+  "compact_on_worker_reassignment": true,
+  "task_timeout": 7200,
+  "router_time_budget": 2400,
+  "router_token_budget": null,
+  "request_timeout": 60,
+  "measure_api_ttft": true,
+  "request_max_retries": 10,
+  "request_retry_initial_delay": 1,
+  "request_retry_max_delay": 300,
   "review_provider": "auto"
 }

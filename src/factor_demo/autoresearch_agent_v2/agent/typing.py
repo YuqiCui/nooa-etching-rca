@@ -58,7 +58,7 @@ class SessionState(BaseModel):
     """Identifier of the task containing this session and any sibling sessions."""
 
     workdir: Path
-    """Task workspace shared by its agents; storing this path grants no file access."""
+    """同一委派树共享的任务工作目录；记录路径本身不授予文件访问权限。"""
 
     assignment_id: str | None = None
     """宿主分配的通用委派标识；普通独立会话可以不设置。"""

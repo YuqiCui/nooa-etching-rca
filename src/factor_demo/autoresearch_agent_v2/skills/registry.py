@@ -8,6 +8,7 @@ import os
 import stat
 from collections.abc import Iterator, Sequence
 from pathlib import Path
+from typing import Literal
 from weakref import finalize
 
 import yaml
@@ -60,14 +61,18 @@ def _description(skill_id: str, source: str) -> SkillDescription:
 class SkillRegistry:
     """按目录名标识技能，仅允许读取显式批准根目录中的文件。"""
 
-    def __init__(self, roots: Sequence[Path] = ()) -> None:
+    def __init__(
+        self, roots: Sequence[Path] = (), *, router_only: Sequence[str] = ()
+    ) -> None:
         """建立目录索引，重复技能标识直接报错。
 
         Args:
             roots: 宿主批准的技能父目录，每个子目录包含 SKILL.md。
+            router_only: 仅允许 Router 发现和加载的技能标识，由宿主指定。
         """
         self._entries: dict[str, tuple[Path, str, SkillDescription]] = {}
         self._roots: dict[Path, WorkspaceFiles] = {}
+        self._router_only = frozenset(router_only)
         self._finalizer = finalize(self, _close_roots, self._roots)
         try:
             for root in roots:
@@ -128,25 +133,32 @@ class SkillRegistry:
             else:
                 raise ValueError("技能引用必须是普通文本文件")
 
-    def catalog(self) -> list[SkillDescription]:
+    def catalog(self, *, role: Literal["router", "worker"] = "router") -> list[SkillDescription]:
         """返回独立元数据，不暴露正文和宿主目录。"""
-        return [entry[2].model_copy(deep=True) for entry in self._entries.values()]
+        return [
+            entry[2].model_copy(deep=True)
+            for skill_id, entry in self._entries.items()
+            if self.contains(skill_id, role=role)
+        ]
 
-    def contains(self, skill_id: str) -> bool:
-        """检查标识是否仍在宿主批准的目录中。"""
-        return skill_id in self._entries
+    def contains(self, skill_id: str, *, role: Literal["router", "worker"] = "router") -> bool:
+        """检查标识是否仍在当前角色获准使用的目录中。"""
+        return skill_id in self._entries and (role == "router" or skill_id not in self._router_only)
 
-    def load(self, skill_id: str) -> SkillSnapshot:
+    def load(self, skill_id: str, *, role: Literal["router", "worker"] = "router") -> SkillSnapshot:
         """冻结技能正文及引用资源，拒绝符号链接和超量资源。
 
         Args:
             skill_id: 目录中已登记的稳定标识。
+            role: 宿主绑定的会话角色，Worker 不能加载 Router 专用技能。
 
         Returns:
             含完整内容与哈希的可序列化快照。
         """
         if skill_id not in self._entries:
             raise ValueError(f"未知技能：{skill_id}")
+        if not self.contains(skill_id, role=role):
+            raise PermissionError(f"当前角色不允许加载技能：{skill_id}")
         root, folder, _ = self._entries[skill_id]
         resources: dict[str, str] = {}
         total_bytes = 0

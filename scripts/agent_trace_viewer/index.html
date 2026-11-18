@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'">
+  <title>__TITLE__</title>
+  <style>__STYLE__</style>
+</head>
+<body>
+  <header class="page-header">
+    <div><h1 id="title"></h1><p id="run-info"></p></div>
+    <span class="offline">离线轨迹</span>
+  </header>
+  <nav class="toolbar" aria-label="轨迹筛选">
+    <input id="search" type="search" placeholder="搜索工具、任务或消息" aria-label="搜索轨迹">
+    <label><input type="checkbox" data-kind="model" checked>模型</label>
+    <label><input type="checkbox" data-kind="tool" checked>工具</label>
+    <label><input type="checkbox" data-kind="task" checked>任务</label>
+    <label><input type="checkbox" id="errors-only">仅异常</label>
+    <label><input type="checkbox" id="show-links" checked>交接连线</label>
+    <label class="spacing">间距 <select id="spacing"><option value="0.8">紧凑</option><option value="1" selected>标准</option><option value="1.5">宽松</option></select></label>
+    <select id="jump" aria-label="跳转到任务"><option value="">跳转到任务…</option></select>
+    <button id="first-error" type="button">首个异常 ↓</button>
+    <span id="visible-count" aria-live="polite"></span>
+  </nav>
+  <div id="warnings" hidden></div>
+  <main id="viewport" aria-label="Router 与 Worker 并行轨迹">
+    <div id="lane-headings"></div>
+    <div id="stage"></div>
+  </main>
+  <aside id="detail" role="dialog" aria-label="事件详情" hidden>
+    <div class="detail-heading"><h2 id="detail-title"></h2><button id="close-detail" aria-label="关闭详情">×</button></div>
+    <p id="detail-time"></p>
+    <select id="request-nav" aria-label="选择模型请求" hidden></select>
+    <div id="detail-tabs" role="tablist"></div>
+    <div id="detail-body" role="tabpanel" tabindex="0"></div>
+  </aside>
+  <script id="trace-data" type="application/json">__TRACE_DATA__</script>
+  <script>__SCRIPT__</script>
+</body>
+</html>

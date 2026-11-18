@@ -6,7 +6,7 @@
     uv run python scripts/experiments/run_sensor_similarity.py --dry-run
 
 默认读取项目模型配置和数据集原有 task.txt，不启动前端或 Web 服务。
-不发送输出或 thinking token 上限，模型级重试为 10 次。
+不发送输出或 thinking token 上限；时限和重试策略沿用运行配置。
 """
 
 import argparse
@@ -26,13 +26,16 @@ from factor_demo.autoresearch_agent_v2.config import ModelConfig
 from factor_demo.autoresearch_agent_v2.python_tools import PythonTools
 from factor_demo.autoresearch_agent_v2.runtime import AgentRuntime, SessionFactory
 from factor_demo.autoresearch_agent_v2.sandboxing import Sandbox, SandboxConfig
-from factor_demo.autoresearch_agent_v2.tools import FileTools, SandboxTools, TaskTools
+from factor_demo.autoresearch_agent_v2.tools import FileTools, SandboxTools
+from factor_demo.autoresearch_agent_v2.tools.builtin_tools.workers import WorkerTools
 from factor_demo.autoresearch_agent_v2.tools.registry import ToolRegistry
+from factor_demo.autoresearch_agent_v2.tools.role_policy import role_tool_names
 from factor_demo.business_tools import register_business_tools
 from factor_demo.dataset_adapter import discovery_copy
 from factor_demo.io_utils import write_json
 from factor_demo.providers import load_provider
 from factor_demo.runtime import RuntimeSettings
+from factor_demo.workspace_dataset import stage_workspace_dataset
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -128,10 +131,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=PROJECT_ROOT / "configs/runtime.json",
         help="沿用推理开关、推理强度和单次请求超时；不设置输出或 thinking token 上限",
     )
-    parser.add_argument("--timeout", type=float, default=3600, help="整次任务超时，单位秒")
+    parser.add_argument("--timeout", type=float, help="整次任务超时秒数；默认沿用运行配置")
     parser.add_argument("--tool-timeout", type=float, default=120, help="单次代码执行上限，单位秒")
     parser.add_argument("--dry-run", action="store_true", help="只显示计划，不创建目录或调用模型")
     args = parser.parse_args(argv)
+    if args.timeout is None:
+        args.timeout = RuntimeSettings.load(args.settings).task_timeout
     if args.timeout <= 0 or args.tool_timeout <= 0:
         parser.error("timeouts must be positive")
     args.dataset = args.dataset.expanduser().resolve(strict=True)
@@ -211,7 +216,9 @@ def _build_model_config(args: argparse.Namespace) -> ModelConfig:
         base_url=provider.base_url,
         max_tokens=None,
         timeout_s=settings.request_timeout,
-        num_retries=10,
+        num_retries=settings.request_max_retries,
+        retry_initial_delay_s=settings.request_retry_initial_delay,
+        retry_max_delay_s=settings.request_retry_max_delay,
         thinking=thinking,
         reasoning_effort=settings.reasoning_effort if provider.api_style == "openai" else None,
         # DeepSeek 的 Chat Completions thinking 模式不接受 required。
@@ -290,7 +297,7 @@ def _restore_failed_run(
     )
     return (
         "从已保存的失败会话继续完成原任务。旧运行保持原样，输入和产物已复制。"
-        f"当前可写工作目录为 {state.workdir}，只读输入目录为 {run / 'input'}。"
+        f"当前工作目录为 {state.workdir}，输入副本位于重新登记的 DATASET 路径。"
         "历史中的旧路径应替换成当前对应路径。Python 内存未恢复；"
         "Notebook 文件保留源码与输出，新建 Notebook 重新加载所需变量。"
         "若 artifacts/ 中已有分析脚本，请显式传入当前输入和输出路径复跑。"
@@ -366,6 +373,7 @@ async def _run_agent(args: argparse.Namespace) -> None:
         else:
             # 与旧 Agent 使用相同的导入器，不复制整个 public，也不授权读取其父目录。
             discovery_copy(args.dataset / "public", run / "input")
+        data_path = stage_workspace_dataset(run / "input", workdir)
         write_json(
             run / "input_manifest.json",
             sorted(
@@ -381,22 +389,23 @@ async def _run_agent(args: argparse.Namespace) -> None:
         registry.register_stateful(PythonTools)
         registry.register_stateful(SandboxTools)
         register_business_tools(registry)
-        session = Session(model, state, tool_registry=registry)
+        allowed = role_tool_names("router", (
+            *registry.names(), *WorkerTools.tool_names, "finish", "register_dataset",
+        ))
+        session = Session(model, state, tool_registry=registry, allow_tools=allowed)
         session.register_dataset(
             "DATASET",
-            str(run / "input"),
-            "A、B 两组传感器统计特征及原始曲线；",
+            str(data_path),
+            "A、B 两组传感器统计特征及原始曲线；工作目录内的任务副本",
         )
         session.register_resource(
             Sandbox,
             partial(SandboxTools.create_sandbox, config=SandboxConfig(
                 workdir=workdir,
-                read_paths=(run / "input",),
                 timeout_s=args.tool_timeout,
             )),
             eager=False,
         )
-        TaskTools.register(session, storage_root=run / "task_storage")
 
         def child_model(parent, request):
             """保留子会话模型轨迹，并将真实用量计入当前运行汇总。"""
@@ -410,9 +419,6 @@ async def _run_agent(args: argparse.Namespace) -> None:
         runtime = AgentRuntime(
             run / ".runtime",
             SessionFactory(
-                configure=lambda child: TaskTools.register(
-                    child, storage_root=run / "task_storage"
-                ),
                 model_factory=child_model,
             ),
         )
@@ -457,7 +463,7 @@ def main(argv: list[str] | None = None) -> None:
                     "task": ((args.resume_from or args.dataset) / "task.txt").read_text(
                         encoding="utf-8"
                     ),
-                    "input_policy": "discovery_copy(public, input), same as the previous agent",
+                    "input_policy": "discovery_copy(public, input), then copy into workspace/dataset-*",
                     "excluded_files": ["features.parquet", "group_A.parquet", "group_B.parquet"],
                     "provider": args.provider,
                     "model_override": args.model,

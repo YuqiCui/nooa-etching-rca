@@ -40,10 +40,12 @@ async def main(args):
         ui_path = args.run / "ui.json"
         ui = json.loads(ui_path.read_text()) if ui_path.exists() else {}
         runner = research_turn
+        default_timeout = 3600
         if identity == "main" and ui.get("engine") == "autoresearch_v2":
             from .autoresearch_web import research_turn as core_research_turn
 
             runner = core_research_turn
+            default_timeout = None
         await runner(
             local,
             request["provider"],
@@ -51,7 +53,7 @@ async def main(args):
             request["mode"],
             events=events,
             live=True,
-            timeout=request.get("timeout", 3600),
+            timeout=request.get("timeout", default_timeout),
         )
     except asyncio.CancelledError:
         events.emit("task.cancelled")

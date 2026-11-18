@@ -87,7 +87,7 @@ def test_threshold_uses_config_and_actual_request_before_completion(
         requests.append(deepcopy(kwargs))
         message = (
             {"role": "assistant", "content": "原任务已检查，保留已验证结论。"}
-            if kwargs["messages"][0]["content"] == COMPACT_PROMPT
+            if kwargs["messages"][-1]["content"] == COMPACT_PROMPT
             else tool_reply("finish", "done")
         )
         return litellm.ModelResponse(choices=[{"message": message}])
@@ -108,7 +108,11 @@ def test_threshold_uses_config_and_actual_request_before_completion(
     assert "样本" in counts[0]["messages"][0]["content"]
     assert session.state.messages[:2] == original
     if expected:
-        assert "tools" not in requests[0] and "tool_choice" not in requests[0]
+        assert requests[0]["tools"] == counts[0]["tools"]
+        assert requests[0]["tool_choice"] == "auto"
+        assert requests[0]["messages"][0] == counts[0]["messages"][0]
+        assert requests[0]["messages"][:-1] == counts[0]["messages"][:-1]
+        assert requests[0]["messages"][-1] == {"role": "user", "content": COMPACT_PROMPT}
         assert requests[-1]["messages"][-1] == {"role": "user", "content": "继续"}
     assert {item["function"]["name"] for item in counts[0]["tools"]} == {
         "finish",
@@ -136,7 +140,7 @@ def test_single_user_task_compacts_repeatedly_between_complete_tool_batches(tmp_
         return 8500 if payload.count("观测结果") >= 800 else 2000
 
     async def complete(**kwargs):
-        if kwargs["messages"][0]["content"] == COMPACT_PROMPT:
+        if kwargs["messages"][-1]["content"] == COMPACT_PROMPT:
             summaries.append(deepcopy(kwargs))
             message = {"role": "assistant", "content": "已完成早期采样，继续采样并核对结论。"}
         else:
@@ -213,7 +217,7 @@ def test_uncompactable_input_does_not_repeat_compaction_requests(tmp_path, monke
 
     async def complete(**kwargs):
         requests.append(kwargs)
-        assert kwargs["messages"][0]["content"] != COMPACT_PROMPT
+        assert kwargs["messages"][-1]["content"] != COMPACT_PROMPT
         return litellm.ModelResponse(choices=[{"message": tool_reply("finish", "done")}])
 
     monkeypatch.setattr(litellm, "acompletion", complete)
@@ -255,7 +259,7 @@ def test_failed_automatic_compaction_stops_before_task_request(tmp_path, monkeyp
 
     asyncio.run(run())
     assert len(requests) == 1
-    assert requests[0]["messages"][0]["content"] == COMPACT_PROMPT
+    assert requests[0]["messages"][-1]["content"] == COMPACT_PROMPT
     assert session.state.compaction is None
     assert session.state.messages[-1] == {"role": "user", "content": "继续"}
 
@@ -272,6 +276,8 @@ def test_failed_automatic_compaction_stops_before_task_request(tmp_path, monkeyp
         {"compact_trigger_percent": True},
         {"compact_trigger_percent": float("nan")},
         {"compact_trigger_percent": float("inf")},
+        {"compact_on_worker_reassignment": "true"},
+        {"compact_on_worker_reassignment": 1},
     ],
 )
 def test_history_config_rejects_invalid_values(values):

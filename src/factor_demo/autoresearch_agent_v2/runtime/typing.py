@@ -35,6 +35,9 @@ class RuntimeLimits:
     max_task_chars: int = 100_000
     result_preview_chars: int = 2_000
     inbox_batch_size: int = 8
+    max_workers: int = 64
+    wait_timeout_s: float = 4 * 60 * 60
+    max_finish_repairs: int = 3
 
     def __post_init__(self) -> None:
         """拒绝使运行时无法推进的预算。"""
@@ -45,7 +48,9 @@ class RuntimeLimits:
                 self.max_task_chars,
                 self.result_preview_chars,
                 self.inbox_batch_size,
+                self.max_workers,
+                self.max_finish_repairs,
             )
-            < 1
+            < 1 or self.wait_timeout_s <= 0
         ):
-            raise ValueError("运行时限制必须为正整数")
+            raise ValueError("运行时计数限制必须为正整数，等待期限必须大于零")

@@ -74,18 +74,17 @@ const names: Record<string, string> = {
   edit_file: "修改研究记录",
   finish: "提交研究结果",
   report_progress: "汇报阶段性进展",
-  agent__spawn: "派发子 Agent",
-  agent__status: "查看子 Agent 状态",
-  agent__wait: "等待子 Agent 结果",
-  agent__read_result: "读取子 Agent 结果",
-  agent__cancel: "停止子 Agent",
+  report: "汇报阶段性进展",
+  StartWorker: "创建 Worker",
+  AssignTask: "分配 Worker 任务",
+  CheckWorkerStatus: "查看 Worker 状态",
+  WaitWorkers: "等待 Worker 结果",
+  CollectWorkerResult: "收集 Worker 结果",
   skill__list: "查看可用技能",
   skill__load: "加载技能",
   skill__read_resource: "读取技能资料",
-  record__get: "读取研究记录",
-  record__put: "保存研究记录",
   run_code: "执行研究代码",
-  write_file: "保存研究脚本",
+  write_file: "保存文件",
   run_script: "运行研究脚本",
   reply: "推送回复",
   read_artifact: "读取已有证据",
@@ -124,7 +123,7 @@ function statusLabel(value: string) {
   return ({ queued: '等待执行', starting: '正在启动', running: '研究中', stopping: '正在停止', completed: '已完成', failed: '执行失败', interrupted: '已中断', cancelled: '已停止', reviewing: '审查中', passed: '检查通过', needs_revision: '需要补证', budget_exhausted: '预算耗尽，保留局限', revision_limit:'达到修订上限，结论待复核', not_required:'图表按需交付', not_reviewed: '尚未完成有效审查' } as Record<string,string>)[value] || value;
 }
 function agentLabel(identity = "main") {
-  return identity === "main" ? "Main Agent" : `Sub Agent · ${identity.slice(-4)}`;
+  return identity === "main" ? "Router" : `Worker · ${identity.slice(-4)}`;
 }
 </script>
 <template>

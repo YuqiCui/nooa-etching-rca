@@ -191,6 +191,33 @@ def test_backend_mutation_does_not_change_input_history(monkeypatch):
     assert messages == original
 
 
+def test_compaction_can_override_required_tool_choice_without_changing_model_config(monkeypatch):
+    """压缩请求允许返回文本，普通任务仍沿用 required，配置保持不变。"""
+    captured = []
+
+    async def complete(**kwargs):
+        captured.append(kwargs)
+        return litellm.ModelResponse(
+            choices=[{"message": {"role": "assistant", "content": "summary"}}]
+        )
+
+    monkeypatch.setattr(litellm, "acompletion", complete)
+    model = Model(ModelConfig(model="openai/fixture-model", api_key="fixture-key"))
+    tools = [{"type": "function", "function": {
+        "name": "finish", "parameters": {"type": "object", "properties": {}},
+    }}]
+
+    async def run():
+        await model.completion(
+            [{"role": "user", "content": "summarize"}], tools=tools, tool_choice="auto",
+        )
+        await model.completion([{"role": "user", "content": "continue"}], tools=tools)
+
+    asyncio.run(run())
+    assert [request["tool_choice"] for request in captured] == ["auto", "required"]
+    assert model.config.tool_choice == "required"
+
+
 def test_provider_error_propagates_without_extra_adapter_retry(monkeypatch):
     error = litellm.AuthenticationError(
         message="Invalid fixture key", llm_provider="openai", model="fixture-model"
@@ -209,7 +236,8 @@ def test_provider_error_propagates_without_extra_adapter_retry(monkeypatch):
 
     assert caught.value is error
     assert len(calls) == 1
-    assert calls[0]["num_retries"] == 3
+    assert calls[0]["num_retries"] == 0
+    assert calls[0]["max_retries"] == 0
 
 
 @pytest.mark.parametrize("max_tokens,num_retries", [(None, 3), (None, 10), (8192, 0), (1024, 5)])
@@ -223,18 +251,16 @@ def test_completion_forwards_configured_limits(monkeypatch, max_tokens, num_retr
         )
 
     monkeypatch.setattr(litellm, "acompletion", complete)
-    config = ModelConfig(model="openai/fixture-model", api_key="fixture-key")
-    if max_tokens is not None or num_retries != 3:
-        config = ModelConfig(
-            model="openai/fixture-model",
-            api_key="fixture-key",
-            max_tokens=max_tokens,
-            num_retries=num_retries,
-        )
+    config = ModelConfig(
+        model="openai/fixture-model", api_key="fixture-key",
+        max_tokens=max_tokens, num_retries=num_retries,
+    )
 
     asyncio.run(Model(config).completion([{"role": "user", "content": "Hello"}]))
 
-    assert captured[0]["num_retries"] == num_retries
+    assert captured[0]["num_retries"] == 0
+    assert captured[0]["max_retries"] == 0
+    assert config.num_retries == num_retries
     if max_tokens is None:
         assert "max_tokens" not in captured[0]
     else:

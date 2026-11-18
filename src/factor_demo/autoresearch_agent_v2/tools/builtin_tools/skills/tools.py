@@ -41,9 +41,20 @@ class SkillTools:
                 registry,
                 available_tools=current.tool_policy.allowed_names,
                 snapshots=current.state.skill_snapshots,
+                role="worker" if current.state.parent_agent_id is not None else "router",
             )
             context.preload(selected)
             current.state.skill_snapshots = context.snapshots()
+            for skill_id in selected:
+                content = (
+                    f"# 宿主显式加载的技能：{skill_id}\n"
+                    + context.read_resource(skill_id, "SKILL.md")
+                )
+                if not any(
+                    message.get("role") == "user" and message.get("content") == content
+                    for message in current.state.messages
+                ):
+                    current.state.messages.append({"role": "user", "content": content})
             yield context
 
         session.register_resource(SkillContext, create_context)
@@ -67,7 +78,7 @@ class SkillTools:
         )
         factory.register_callable(
             "skill__load", self.load,
-            description="在当前会话加载指定技能正文；不会开放额外工具或权限。",
+            description="按需加载并返回指定技能全文；正文不进入系统提示词，不开放额外权限。",
         )
         factory.register_callable(
             "skill__read_resource", self.read_resource,
@@ -85,13 +96,14 @@ class SkillTools:
         return self._context.catalog()
 
     def load(self, skill_id: str) -> dict[str, Any]:
-        """激活技能并同步可恢复会话状态。"""
+        """通过工具结果返回正文并保存快照，不修改系统提示词。"""
         self._require_active()
         snapshot = self._context.load(skill_id)
         self._session.state.skill_snapshots = self._context.snapshots()
         return {
             "skill_id": skill_id, "version": snapshot.description.version,
             "sha256": snapshot.sha256, "loaded": True,
+            "content": snapshot.content, "resources": sorted(snapshot.resources),
         }
 
     def read_resource(self, skill_id: str, path: str) -> str:

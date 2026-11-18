@@ -207,7 +207,7 @@ describe("Vue 3 workspace", () => {
       call_id: "child-model", text: "子任务独立推理",
     }, "one", child);
     source.emit(6, "agent.tool.start", {
-      tool_call_id: "same", name: "agent__wait", arguments: {},
+      tool_call_id: "same", name: "WaitWorkers", arguments: {},
     });
     source.emit(7, "agent.tool.start", {
       tool_call_id: "same", name: "sandbox__run_shell", arguments: { command: "child check" },
@@ -221,13 +221,13 @@ describe("Vue 3 workspace", () => {
     expect(panel.text()).toContain("主任务推理");
     expect(panel.text()).toContain("子任务独立推理");
     expect(panel.findAll(".thought-card > summary").map((card) => card.text())).toEqual([
-      expect.stringContaining("Sub Agent · 53b0"),
-      expect.stringContaining("Main Agent"),
+      expect.stringContaining("Worker · 53b0"),
+      expect.stringContaining("Router"),
     ]);
     expect(panel.findAll(".tool-card > summary").map((card) => card.text())).toEqual([
-      expect.stringContaining("Sub Agent · 42fe · 读取研究记录"),
-      expect.stringContaining("Sub Agent · 53b0 · 执行文件操作"),
-      expect.stringContaining("Main Agent · 等待子 Agent 结果"),
+      expect.stringContaining("Worker · 42fe · 读取研究记录"),
+      expect.stringContaining("Worker · 53b0 · 执行文件操作"),
+      expect.stringContaining("Router · 等待 Worker 结果"),
     ]);
     expect(panel.findAll(".live-metrics b").at(-1)?.text()).toBe("3");
     source.emit(9, "agent.tool.end", {
@@ -235,7 +235,7 @@ describe("Vue 3 workspace", () => {
     }, "one", child);
     await settle();
     expect(panel.findAll(".tool-card.running")).toHaveLength(2);
-    expect(panel.find(".tool-card.ok").text()).toContain("Sub Agent · 53b0");
+    expect(panel.find(".tool-card.ok").text()).toContain("Worker · 53b0");
     expect(panel.find(".tool-card.ok").text()).toContain("子任务真实输出");
     expect(panel.findAll(".live-metrics b").at(-1)?.text()).toBe("2");
   });
@@ -245,7 +245,7 @@ describe("Vue 3 workspace", () => {
     const source = Source.instances.at(-1)!;
     let id = 1;
     source.emit(id++, "model.start", { call_id: "main-waiting" });
-    source.emit(id++, "agent.tool.start", { tool_call_id: "main-tool", name: "agent__wait" });
+    source.emit(id++, "agent.tool.start", { tool_call_id: "main-tool", name: "WaitWorkers" });
     for (let index = 0; index < 65; index++) {
       source.emit(id++, "model.start", { call_id: `child-${index}` }, "one", "child-1234");
       source.emit(id++, "model.stream.end", { call_id: `child-${index}` }, "one", "child-1234");
@@ -258,9 +258,9 @@ describe("Vue 3 workspace", () => {
     }
     await settle();
     expect(wrapper.findAll(".thought-card > summary").map((card) => card.text())).toContainEqual(
-      expect.stringContaining("Main Agent · 模型正在生成"),
+      expect.stringContaining("Router · 模型正在生成"),
     );
-    expect(wrapper.find(".tool-card.running").text()).toContain("Main Agent · 等待子 Agent 结果");
+    expect(wrapper.find(".tool-card.running").text()).toContain("Router · 等待 Worker 结果");
     expect(wrapper.findAll(".live-metrics b").at(-1)?.text()).toBe("1");
     source.emit(id++, "model.stream.end", { call_id: "main-waiting" });
     source.emit(id++, "agent.tool.end", { tool_call_id: "main-tool", ok: true });

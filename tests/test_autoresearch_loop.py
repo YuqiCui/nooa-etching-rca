@@ -60,7 +60,7 @@ def test_tools_continue_and_finish_returns_then_stops(monkeypatch, tmp_path, cap
     assert capsys.readouterr().out == ""
     assert len(requests) == 2
     for request in requests:
-        assert request["messages"][0] == {"role": "system", "content": SYSTEM_PROMPT}
+        assert request["messages"][0] == {"role": "system", "content": loop.build_system_prompt()}
         assert sum(message["role"] == "system" for message in request["messages"]) == 1
     assert loop.session.messages[0] == {"role": "user", "content": "Start"}
     assert requests[0]["tool_choice"] == "required"
@@ -358,9 +358,10 @@ def test_run_hooks_transform_content_and_always_run_on_exit(monkeypatch, tmp_pat
 def test_custom_system_prompt_is_sent_to_model(monkeypatch, tmp_path):
     async def complete(**kwargs):
         assert kwargs["messages"] == [
-            {"role": "system", "content": "自定义系统提示词"},
+            {"role": "system", "content": loop.build_system_prompt()},
             {"role": "user", "content": "Start"},
         ]
+        assert kwargs["messages"][0]["content"].startswith("自定义系统提示词\n\n时间预算：")
         return litellm.ModelResponse(
             choices=[
                 {
@@ -380,11 +381,10 @@ def test_custom_system_prompt_is_sent_to_model(monkeypatch, tmp_path):
 
 def test_default_prompt_leaves_business_contracts_to_tasks_and_skills():
     """共用基础提示词不固定研究合同或专用验证角色。"""
-    assert "skill" in SYSTEM_PROMPT
     for business_rule in ("report.md", "五折", "ResearchResult", "Verifier", "acceptance_criteria"):
         assert business_rule not in SYSTEM_PROMPT
-    assert "finish(content)" in SYSTEM_PROMPT
-    assert "report(content)" not in SYSTEM_PROMPT
+    assert "Use finish to end the current task." in SYSTEM_PROMPT
+    assert "Use report to report intermediate results." in SYSTEM_PROMPT
 
 
 @pytest.mark.parametrize("with_call", [False, True])

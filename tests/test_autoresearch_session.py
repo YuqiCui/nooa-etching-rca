@@ -148,7 +148,7 @@ def test_session_continues_after_finish_with_complete_tool_history(
         first_history = state.get_messages()
         assert await session.run("继续分析") == "结果2"
         assert requests[1]["messages"] == [
-            {"role": "system", "content": "系统提示词"},
+            {"role": "system", "content": loop.build_system_prompt()},
             *first_history,
             {"role": "user", "content": "继续分析"},
         ]

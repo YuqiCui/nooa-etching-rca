@@ -8,7 +8,7 @@ from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 
-from ..config import HistoryConfig
+from ..config import HistoryConfig, TimeBudgetConfig
 from ..telemetry import print_session_startup
 from ..tools import StatefulTool, ToolFactory
 from ..tools.policy import AllowTools, ToolPolicy
@@ -37,6 +37,7 @@ class Session:
         *,
         system_prompt: str = SYSTEM_PROMPT,
         history_config: HistoryConfig | None = None,
+        time_budget_config: TimeBudgetConfig | None = None,
         tool_registry: ToolRegistry | None = None,
         allow_tools: AllowTools = "all",
         skill_registry: SkillRegistry | None = None,
@@ -49,10 +50,11 @@ class Session:
             state: 对话标识、工作目录和可序列化历史，不存放活资源。
             system_prompt: 各轮模型请求使用的系统提示词。
             history_config: 上下文预算、自动压缩百分比及默认保留轮数。
+            time_budget_config: Router 每轮提醒预算；None 使用 40 分钟及无限 token。
             tool_registry: 当前应用显式启用的工具定义，构造时复制快照。
             allow_tools: all 或明确允许的工具名，不能扩大注册目录。
             skill_registry: 宿主批准的技能目录；None 不启用技能发现。
-            skills: 第一次模型请求前直接加载的技能标识。
+            skills: 宿主显式预加载的技能标识，正文作为会话消息提供，不进入系统提示词。
         """
         self.state = state
         self.tool_registry = tool_registry.copy() if tool_registry is not None else ToolRegistry()
@@ -66,6 +68,7 @@ class Session:
             state,
             system_prompt=system_prompt,
             history_config=history_config,
+            time_budget_config=time_budget_config,
         )
         self._providers: dict[type[Any], Callable[[Session], AbstractAsyncContextManager[Any]]] = {}
         self._eager_resources: set[type[Any]] = set()
@@ -96,7 +99,7 @@ class Session:
             raise ValueError("预加载或恢复技能需要显式提供 skill_registry")
 
     def _register_skills(self, registry: SkillRegistry) -> None:
-        """登记独立的技能资源，并在请求时构建当前激活内容。"""
+        """登记技能资源，系统提示词只展示当前角色可见的名称与描述。"""
         from ..skills import SkillContext
         from ..tools.builtin_tools.skills import SkillTools
 
@@ -177,6 +180,19 @@ class Session:
     def stateful_tool_types(self) -> tuple[type[StatefulTool], ...]:
         """提供已登记类型的只读快照，供宿主复制可独立创建的通用能力。"""
         return tuple(self._stateful_tools)
+
+    def resource_factory(
+        self, resource_type: type[ResourceT]
+    ) -> Callable[[Session], AbstractAsyncContextManager[ResourceT]] | None:
+        """供宿主复制资源配置声明，不创建资源或扩大模型权限。
+
+        Args:
+            resource_type: 宿主需要检查的资源类型。
+
+        Returns:
+            已登记工厂；未登记时返回 None。调用方仍需核对目标会话范围。
+        """
+        return self._providers.get(resource_type)
 
     async def bind_resource(
         self,
@@ -401,6 +417,7 @@ class Session:
                 system_prompt=self.loop.build_system_prompt(),
                 history_config=self.loop.history_config,
                 keep_recent_turns=keep_recent_turns,
+                tools=self.loop.tools.schemas(),
             )
 
     async def run(self, content: str) -> str:

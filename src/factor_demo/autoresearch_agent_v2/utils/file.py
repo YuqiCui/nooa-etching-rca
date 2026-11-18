@@ -6,7 +6,7 @@ import errno
 import os
 import stat
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from threading import Lock, RLock
 from typing import Any
@@ -81,23 +81,8 @@ class WorkspaceFiles:
             os.close(self._root_fd)
             self._root_fd = None
 
-    @contextmanager
-    def open_parent(self, path: str, *, create: bool = False) -> Iterator[tuple[int, str, str]]:
-        """锁定文件，并通过可信根目录逐级打开其父目录。
-
-        Args:
-            path: 根目录内的相对路径或绝对路径，不接受父目录跳转。
-            create: 是否创建缺失的父目录，仅供 write_file 使用。
-
-        Yields:
-            父目录描述符、文件名和规范化的相对路径键。
-
-        Raises:
-            FileToolError: 路径为空、越界或包含符号链接。
-            OSError: 目录访问失败。
-            RuntimeError: 实例已关闭。
-        """
-        self.require_open()
+    def relative_path(self, path: str) -> Path:
+        """校验路径并返回工作目录内的规范相对路径，不访问或创建文件。"""
         if not path or "\x00" in path:
             raise FileToolError("invalid_argument", "Provide a nonempty file path.")
         relative = Path(path)
@@ -112,6 +97,44 @@ class WorkspaceFiles:
                 ) from None
         if not relative.parts:
             raise FileToolError("not_file", "Provide a regular text file path.")
+        return relative
+
+    @contextmanager
+    def lock_paths(self, paths: list[str]) -> Iterator[None]:
+        """按统一顺序持有全部目标的进程内锁，避免补丁与其他文件工具交错。"""
+        self.require_open()
+        keys = sorted({str(self.relative_path(path)) for path in paths})
+        with ExitStack() as stack:
+            for key in keys:
+                stack.enter_context(_file_lock(self.root, Path(key)))
+            yield
+
+    def snapshot(self, path: str) -> tuple[bytes, os.stat_result] | None:
+        """只读检查目标；父目录缺失视为文件缺失，不创建任何目录。"""
+        try:
+            with self.open_parent(path) as (directory_fd, name, _):
+                return self.read_bytes(directory_fd, name)
+        except FileNotFoundError:
+            return None
+
+    @contextmanager
+    def open_parent(self, path: str, *, create: bool = False) -> Iterator[tuple[int, str, str]]:
+        """锁定文件，并通过可信根目录逐级打开其父目录。
+
+        Args:
+            path: 根目录内的相对路径或绝对路径，不接受父目录跳转。
+            create: 是否为写入操作创建缺失的父目录。
+
+        Yields:
+            父目录描述符、文件名和规范化的相对路径键。
+
+        Raises:
+            FileToolError: 路径为空、越界或包含符号链接。
+            OSError: 目录访问失败。
+            RuntimeError: 实例已关闭。
+        """
+        self.require_open()
+        relative = self.relative_path(path)
         with _file_lock(self.root, relative):
             directory_fd = os.dup(self._root_fd)
             try:
@@ -176,6 +199,8 @@ class WorkspaceFiles:
         name: str,
         content: bytes,
         expected: tuple[bytes, os.stat_result] | None,
+        *,
+        mode: int | None = None,
     ) -> None:
         """在同目录完整写入临时文件，复查版本后原子发布。
 
@@ -184,6 +209,7 @@ class WorkspaceFiles:
             name: 目标文件名。
             content: 要写入的完整字节。
             expected: 操作开始时读取的内容与元信息；None 表示只能新建。
+            mode: 新建移动目标时继承的普通权限位。
 
         Raises:
             FileToolError: 文件过大或目标版本发生变化。
@@ -206,6 +232,8 @@ class WorkspaceFiles:
                 output.flush()
                 if expected is not None:
                     os.fchmod(output.fileno(), stat.S_IMODE(expected[1].st_mode) & 0o777)
+                elif mode is not None:
+                    os.fchmod(output.fileno(), mode & 0o777)
                 os.fsync(output.fileno())
             current = self.read_bytes(directory_fd, name)
             if (current is None) != (expected is None) or (
@@ -230,3 +258,18 @@ class WorkspaceFiles:
                 os.unlink(temporary, dir_fd=directory_fd)
             except FileNotFoundError:
                 pass
+
+    def delete_bytes(
+        self, directory_fd: int, name: str, expected: tuple[bytes, os.stat_result]
+    ) -> None:
+        """复查普通文件的内容和版本后删除；调用方必须持有对应路径锁。"""
+        if not expected[1].st_mode & 0o222:
+            raise PermissionError(errno.EACCES, "Target file is read-only")
+        current = self.read_bytes(directory_fd, name)
+        if (
+            current is None
+            or current[0] != expected[0]
+            or (_version(current[1]) != _version(expected[1]))
+        ):
+            raise FileToolError("file_changed", "Read the target again before retrying.")
+        os.unlink(name, dir_fd=directory_fd)

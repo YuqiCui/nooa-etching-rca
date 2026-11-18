@@ -39,15 +39,15 @@ from .sqlite.documents import (
 from .sqlite.events import SQLiteEventService as _SQLiteEventService
 from .sqlite.orchestration import SQLiteBranchService as _SQLiteBranchService
 from .sqlite.orchestration import SQLiteBudgetService as _SQLiteBudgetService
-from .sqlite.records import RecordStore
 from .sqlite.runtime import SQLiteDatabase as _SQLiteDatabase
 from .sqlite.tasks import SQLiteTaskPlanService as _SQLiteTaskPlanService
+from .sqlite.workers import WorkerStore
 
 __all__ = [
     "BudgetExceeded",
-    "RecordStore",
     "RuntimeStore",
     "StorageError",
+    "WorkerStore",
     "create_branch_service",
     "create_budget_service",
     "create_code_service",

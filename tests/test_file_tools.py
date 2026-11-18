@@ -371,9 +371,10 @@ def test_schema_validation_is_recoverable_only_when_requested(files):
     factory = ToolFactory()
     files.register_tools(factory)
     schemas = {schema["function"]["name"]: schema["function"] for schema in factory.schemas()}
-    assert set(schemas) == {"read_file", "write_file", "edit_file"}
+    assert set(schemas) == {"read_file", "write_file", "edit_file", "apply_patch"}
     expected = {
         "read_file": {"path", "offset", "limit"},
+        "apply_patch": {"input"},
         "write_file": {"path", "content"},
         "edit_file": {"path", "old_string", "new_string", "replace_all"},
     }
@@ -469,6 +470,7 @@ def test_agent_recovers_from_argument_and_match_errors_across_turns(monkeypatch,
     asyncio.run(scenario())
     assert path.read_bytes() == b"value = 3\n"
     assert {s["function"]["name"] for s in requests[0][1]} == {
+        "apply_patch",
         "read_file",
         "write_file",
         "edit_file",

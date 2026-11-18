@@ -1,8 +1,13 @@
 # V2 通用多 Agent 架构改造设计
 
+> 2026-11-16 更新：本文以下 sub-agent 接口描述为历史设计。当前模型接口已替换为
+> StartWorker、AssignTask、CheckWorkerStatus、WaitWorkers 与 CollectWorkerResult。
+> 入口为 Router，Worker 在同一根运行内复用上下文，结果需要显式收集。
+> 当前行为与中断恢复边界以 [Autoresearch 核心 Agent](autoresearch-core.md) 为准。
+
 本文依据 2026-11-12 的工作区源码编写。当前分支为 `main`。本版纳入工具分层、allow_tools 与并行子 agent。另补充实时结果投递和通用 finish 路由。前稿中的专用 ResearchRunner 与固定研究合同设计已撤回。
 
-本设计的通用框架已实施：工具注册与授权、skill 加载、并行子会话、finish 路由、可靠投递和通用 JSON 文档均已接入。旧 `feature_verifier/` 已删除，纯数值评估移至历史模块。业务算法与前端未改写。
+本设计的通用框架已实施：工具注册与授权、skill 加载、并行子会话、finish 路由和可靠投递均已接入。研究 JSON 通过文件工具保存。旧 `feature_verifier/` 已删除，纯数值评估移至历史模块。业务算法与前端未改写。
 
 本文保留改造前的源码定位与实施计划，作为设计依据。当前可用接口与运行说明见 [Autoresearch 核心 Agent](autoresearch-core.md)。框架不附带默认 Auto Research 业务 skill。
 
@@ -73,7 +78,6 @@ src/factor_demo/
         messages.py                finish
         agents/                    spawn、status、wait、cancel
         skills/                    list、load、read_resource
-        records/                   通用 JSON 文档访问
         files/                     通用文件工具
         notebooks/                 Notebook 执行
         sandbox.py                 隔离 Shell
@@ -156,7 +160,10 @@ allow_tools 必须同时作用于以下位置：
 
 主子 agent 使用同一个 BASE_SYSTEM_PROMPT 和上下文构建器。身份、工具权限、父子关系来自宿主。研究流程由已加载 skill 与任务请求表达。
 
-SkillRegistry 提供技能目录；SkillLoader 提供正文、引用文件、版本和哈希快照。首次只展示简短目录，正文按需加载。父 agent 指定的 skill 在子 agent 第一次请求前直接预加载。
+SkillRegistry 提供技能目录；SkillLoader 提供正文、引用文件、版本和哈希快照。
+系统提示词中的技能目录仅包含 name 和 description，加载后也不拼接技能正文。
+正文按需通过加载工具的返回值提供；宿主显式预加载的技能通过普通会话消息提供。
+本项目 Web 的 feature-research 仅 Router 可见和加载，不默认预加载，也不向 Worker 继承。
 
 skill 可以声明工具依赖；依赖用于检查，不会修改 allow_tools。缺少必需工具时应在启动前报告错误，或按技能明确声明的可选路径工作。skill 不执行注册代码，也不直接获得宿主凭据。
 
@@ -194,7 +201,7 @@ agent__spawn 立即返回句柄。运行时在并发槽位可用时启动子会�
 
 agent__status、agent__wait 和 agent__cancel 只能管理调用者获准访问的委派。不能通过其他 agent 的 ID 读取无关任务、取消父会话或扩大管理范围。
 
-每个子会话独占写目录、Notebook kernel、工具实例与模型历史。只读输入和冻结结果按授权共享。全局运行时只在更新注册表或状态时短暂加锁，不能在模型调用或工具执行期间持有总锁。
+新建子会话继承父会话的工作目录，同一委派树直接共享文件。Notebook kernel、工具实例与模型历史仍按会话独立持有。并行任务应约定不同输出文件，修改共享文件前先读取当前内容。只读输入按授权共享。全局运行时只在更新注册表或状态时短暂加锁，不能在模型调用或工具执行期间持有总锁。
 
 父 agent 等待结果时进入挂起状态，释放模型执行资源。子结果到达后唤醒。agent__wait 用于父 agent 主动等待，不是自动接收结果的必要条件。保留父会话继续处理结果所需的调度机会，避免子任务占满全局资源后父会话无法收尾。
 
@@ -252,15 +259,15 @@ finish 的结果落盘、委派终态和 outbox 记录在同一事务提交；�
 
 通用运行存储负责 agent 树、委派正文、执行状态、skill 快照、工具授权、结果引用和收件箱。建议复用现有 SQLite 事务基础设施，新增运行时存储服务，不引入研究领域表。
 
-研究 JSON 继续由主 agent 维护。建议提供通用 records 工具操作宿主管理的 JSON 文档，支持 document_id、JSON 内容或补丁、expected_revision，以及按文档设置的所有者权限。工具校验 JSON 合法性和并发版本，不要求固定研究字段。
+研究 JSON 由主 agent 使用 `write_file` 保存为工作目录内的真实文件；有 shell 权限时也可通过 `sandbox__run_shell` 写入。更新前读取已有内容，保留其他研究和历史，文件发生变化时重新读取并合并，写入后读取文件核对内容。不引入专用文档工具或文档版本协议。
 
 research.json 的结构、何时更新、如何记录结论与验收，由 Auto Research skill 与用户请求约定。本轮不确定具体业务 Schema，也不新增 research_create、research_review 或 ResearchResult 等固定业务合同。
 
 研究文档不能成为运行队列或投递可靠性的唯一来源。运行时数据库记录真实执行状态；研究 JSON 记录主 agent 的研究认识。二者语义不同，无需将 Task、运行状态和研究验收做成多个互相覆盖的权威来源。
 
-记录与会话检查点放在模型可写目录之外。父子 agent 对这些资源的访问通过受控工具完成。子会话默认不能改写父文档；授权按资源所有者与工具范围执行，无需定义专用角色类。
+运行时记录与会话检查点放在模型可写目录之外，由宿主管理。研究 JSON 放在共享工作目录内，由 skill 约定主会话单写入；文件工具不按 agent 隔离研究文档。文件与 shell 操作仍受工作目录、输入授权和内部沙箱限制。
 
-执行保持宿主原生 Python、uv、Node，并保留内部沙箱。各会话独占写目录，显式授予只读输入，不继承凭据或越界路径。缺少受支持隔离能力时报告阻塞，不改用外层 Docker，不取消隔离。
+执行保持宿主原生 Python、uv、Node，并保留内部沙箱。父子会话共享工作目录，各自持有执行资源；显式授予只读输入，不继承凭据或越界路径。旧版检查点恢复时保留已保存的目录，不自动迁移旧产物。缺少受支持隔离能力时报告阻塞，不改用外层 Docker，不取消隔离。
 
 Skill 资源加载拒绝越界与符号链接逃逸。工具过滤不能代替执行沙箱；共享基础 prompt 也不能代替调用入口的授权校验。
 
@@ -280,7 +287,6 @@ Skill 资源加载拒绝越界与符号链接逃逸。工具过滤不能代替�
 | 新增 | `tools/{registry,policy}.py` | 显式 provider 注册；工具来源、名单与继承规则 |
 | 新增 | `tools/builtin_tools/agents/` | 通用 agent__spawn、agent__status、agent__wait、agent__cancel |
 | 新增 | `tools/builtin_tools/skills/` | 技能目录、加载与引用读取 |
-| 新增 | `tools/builtin_tools/records/` | 通用 JSON 文档读写、版本冲突和所有者权限 |
 | 修改 | `tools/builtin_tools/messages.py` | finish 只提交通用完成信号，发送目的地由 runtime 决定 |
 | 修改 | `tools/__init__.py` | 导出注册接口与内置工具，避免导入业务包 |
 | 新增 | `skills/` | 已批准目录发现、预加载、正文与引用快照 |
@@ -309,10 +315,10 @@ Skill 资源加载拒绝越界与符号链接逃逸。工具过滤不能代替�
 | 2 | 共用基础 prompt、skill 与通用委派 | 父选技能首次请求生效；任意任务正文可传递；没有固定研究合同 |
 | 3 | AgentRuntime、Scheduler 与独立 Session | 至少两个子 agent 重叠执行；单会话历史串行；超过上限排队 |
 | 4 | finish 路由、实时 inbox 与恢复 | 子完成自动唤醒父；工具协议完整；投递去重；结束竞态不丢结果 |
-| 5 | 通用 JSON records 与状态恢复 | 版本冲突、所有者隔离与恢复可检查；不强制研究字段 |
+| 5 | 研究 JSON 文件与状态恢复 | 文件可保存、更新和跨会话读取；不强制研究字段 |
 | 6 | 删除 feature_verifier、清理导入与更新说明 | 核心无专用角色类；现有入口通过最小装配接入通用运行时 |
 
-建议新增 `tests/test_tool_registry.py`、`test_tool_policy.py`、`test_v2_skills.py`、`test_agent_runtime.py`、`test_agent_mailbox.py`、`test_finish_routing.py` 与 `test_record_tools.py`。复用现有 Session、history、Notebook、沙箱和 PythonTools 测试。
+建议新增 `tests/test_tool_registry.py`、`test_tool_policy.py`、`test_v2_skills.py`、`test_agent_runtime.py`、`test_agent_mailbox.py` 与 `test_finish_routing.py`。研究文件持久化由 `tests/test_autoresearch_web.py` 覆盖。复用现有 Session、history、Notebook、沙箱和 PythonTools 测试。
 
 核心并发测试采用可控的模拟模型和实际异步调度。两个子会话都进入等待点后再同时释放，证明存在执行重叠；不能仅根据耗时接近判断并发。
 

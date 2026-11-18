@@ -1,5 +1,6 @@
 import asyncio
 import json
+from pathlib import Path
 
 import httpx
 import pytest
@@ -23,10 +24,40 @@ def test_context_reserves_output_and_summary_headroom():
         RuntimeSettings(summary_threshold=225_000)
 
 
+def test_worker_reassignment_compaction_config_loads_and_requires_boolean(tmp_path):
+    """配置文件可开启换任务压缩，默认关闭且不接受字符串或整数。"""
+    path = tmp_path / "runtime.json"
+    path.write_text(json.dumps({"compact_on_worker_reassignment": True}))
+    assert RuntimeSettings.load(path).compact_on_worker_reassignment is True
+    assert RuntimeSettings().compact_on_worker_reassignment is False
+    for value in ("true", 1, None):
+        with pytest.raises(ValueError):
+            RuntimeSettings(compact_on_worker_reassignment=value)
+
+
 def test_glm_cannot_silently_disable_thinking():
     p = Provider("glm", "glm-5.3-flash", "https://example.invalid/v1", "openai", "test-only")
     with pytest.raises(ValueError, match="cannot disable"):
         build_client(p, RuntimeSettings(thinking=False))
+
+
+def test_request_policy_loads_and_rejects_invalid_limits(tmp_path):
+    """运行配置保存总时限、请求时限及退避参数，并拒绝无效数值。"""
+    settings = RuntimeSettings.load(Path("configs/runtime.json"))
+    assert settings.task_timeout == 7200
+    assert settings.request_timeout == 60
+    assert settings.request_max_retries == 10
+    assert settings.request_retry_initial_delay == 1
+    assert settings.request_retry_max_delay == 300
+    path = tmp_path / "runtime.json"
+    path.write_text(settings.model_dump_json())
+    assert RuntimeSettings.load(path) == settings
+    for field in ("task_timeout", "request_timeout", "request_retry_initial_delay",
+                  "request_retry_max_delay"):
+        with pytest.raises(ValueError):
+            RuntimeSettings(**{field: 0})
+    with pytest.raises(ValueError):
+        RuntimeSettings(request_max_retries=-1)
 
 
 def test_real_nooa_wire_v2_output_cap_and_reasoning(monkeypatch):

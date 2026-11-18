@@ -30,7 +30,7 @@ class SessionFactory:
         self._model_factory = model_factory
 
     def __call__(self, parent: Session, request: ChildRequest) -> Session:
-        """复制工具与技能定义，为子会话配置独立写目录及授权输入。"""
+        """复制工具与技能定义，为子会话配置共享工作目录及授权输入。"""
         model = (
             self._model_factory(parent, request)
             if self._model_factory is not None
@@ -51,7 +51,10 @@ class SessionFactory:
         try:
             sandbox = parent.resource(Sandbox)
         except RuntimeError:
-            pass
+            # Router 可以禁用计算工具；Worker 仍应取得宿主明确批准的只读输入配置。
+            provider = parent.resource_factory(Sandbox)
+            if provider is not None:
+                child.register_resource(Sandbox, provider, eager=False)
         else:
             config = sandbox.config.model_copy(update={"workdir": child.state.workdir})
             child.register_resource(

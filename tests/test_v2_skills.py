@@ -1,6 +1,7 @@
 """检查技能加载、恢复、能力依赖和资源访问边界。"""
 
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
@@ -29,8 +30,13 @@ def test_catalog_is_progressive_and_contexts_are_independent(tmp_path):
     registry = SkillRegistry([tmp_path])
     first, second = SkillContext(registry), SkillContext(registry)
     assert "按父任务执行" not in first.instructions()
+    initial_instructions = first.instructions()
+    assert json.loads(initial_instructions.split("\n", 1)[1]) == [
+        {"name": "analysis", "description": "检查指定任务"},
+    ]
     first.preload(["analysis"])
-    assert "按父任务执行" in first.instructions()
+    assert first.instructions() == initial_instructions
+    assert "按父任务执行" in first.read_resource("analysis", "SKILL.md")
     assert "实际验证后" not in first.instructions()
     assert "按父任务执行" not in second.instructions()
     assert first.read_resource("analysis", "references/check.md") == "实际验证后再报告结果。"
@@ -49,11 +55,79 @@ def test_restore_uses_frozen_content_and_checks_hash(tmp_path):
     (folder / "SKILL.md").write_text("新版部署正文")
     (folder / "references" / "check.md").write_text("新版资料")
     restored = SkillContext(registry, snapshots=saved)
-    assert "按父任务执行" in restored.instructions()
+    assert "按父任务执行" not in restored.instructions()
+    assert "按父任务执行" in restored.read_resource("analysis", "SKILL.md")
     assert restored.read_resource("analysis", "references/check.md") == "实际验证后再报告结果。"
     saved[0]["content"] = "伪造的正文"
     with pytest.raises(ValueError, match="哈希"):
         SkillContext(registry, snapshots=saved)
+
+
+def test_router_only_skill_cannot_be_discovered_loaded_or_restored_by_worker(tmp_path):
+    """角色限制覆盖目录、直接加载、预加载及旧快照恢复，通用技能仍可使用。"""
+    create_skill(tmp_path, "feature-research")
+    create_skill(tmp_path, "shared")
+    registry = SkillRegistry([tmp_path], router_only=["feature-research"])
+    router = SkillContext(registry)
+    worker = SkillContext(registry, role="worker")
+    assert {item["skill_id"] for item in router.catalog()} == {"feature-research", "shared"}
+    assert {item["skill_id"] for item in worker.catalog()} == {"shared"}
+    assert "feature-research" not in worker.instructions()
+    with pytest.raises(PermissionError, match="当前角色"):
+        registry.load("feature-research", role="worker")
+    with pytest.raises(PermissionError, match="当前角色"):
+        worker.load("feature-research")
+    with pytest.raises(PermissionError, match="当前角色"):
+        worker.preload(["shared", "feature-research"])
+    assert worker.snapshots() == []
+    router.load("feature-research")
+    with pytest.raises(PermissionError, match="当前角色"):
+        SkillContext(registry, role="worker", snapshots=router.snapshots())
+    worker.load("shared")
+    assert [item["description"]["skill_id"] for item in worker.snapshots()] == ["shared"]
+
+
+@pytest.mark.parametrize("entry", ["tool", "preload", "restore"])
+def test_worker_session_enforces_router_only_skill_policy(tmp_path, entry):
+    """即使宿主开放技能工具，也不能通过子会话加载或恢复 Router 专用技能。"""
+    from factor_demo.autoresearch_agent_v2.agent import Session, SessionState
+    from factor_demo.autoresearch_agent_v2.agent.model import Model
+    from factor_demo.autoresearch_agent_v2.config import ModelConfig
+
+    create_skill(tmp_path / "skills", "feature-research")
+    registry = SkillRegistry([tmp_path / "skills"], router_only=["feature-research"])
+    state = SessionState(
+        session_id="child", agent_id="worker", parent_agent_id="router",
+        task_id="task", workdir=tmp_path,
+    )
+    if entry == "restore":
+        router = SkillContext(registry)
+        router.load("feature-research")
+        state.skill_snapshots = router.snapshots()
+    session = Session(
+        Model(ModelConfig(model="openai/fixture", api_key="fixture")), state,
+        skill_registry=registry, skills=["feature-research"] if entry == "preload" else (),
+    )
+
+    async def scenario():
+        """仅调用真实会话和工具，不发送模型请求。"""
+        if entry != "tool":
+            with pytest.raises(PermissionError, match="当前角色"):
+                await session.start()
+            await session.aclose()
+            return
+        async with session:
+            assert await session.call("skill__list", {}) == []
+            assert "feature-research" not in session.loop.build_system_prompt()
+            with pytest.raises(PermissionError, match="当前角色"):
+                await session.call("skill__load", {"skill_id": "feature-research"})
+            with pytest.raises(ValueError, match="先加载"):
+                await session.call("skill__read_resource", {
+                    "skill_id": "feature-research", "path": "SKILL.md",
+                })
+            assert state.skill_snapshots == []
+
+    asyncio.run(scenario())
 
 
 def test_tool_dependencies_cannot_grant_or_restore_revoked_tools(tmp_path):
@@ -178,22 +252,24 @@ def test_session_preload_without_skill_tools_and_snapshot_restore(tmp_path):
         async with create_session(state, ["analysis"]) as first:
             assert [item["function"]["name"] for item in first.schemas()] == ["finish"]
             prompt = first.loop.build_system_prompt()
-            assert "按父任务执行" in prompt
+            assert "按父任务执行" not in prompt
+            assert sum("按父任务执行" in item["content"] for item in first.state.messages) == 1
             assert len(first.state.skill_snapshots) == 1
             with pytest.raises((PermissionError, UnknownToolError)):
                 await first.call("skill__load", {"skill_id": "analysis"})
         restored = SessionState.model_validate_json(state.model_dump_json())
         (folder / "SKILL.md").write_text("替换后的部署正文")
         async with create_session(restored) as second:
-            assert "按父任务执行" in second.loop.build_system_prompt()
+            assert "按父任务执行" not in second.loop.build_system_prompt()
             assert "替换后的部署正文" not in second.loop.build_system_prompt()
+            assert sum("按父任务执行" in item["content"] for item in second.state.messages) == 1
             assert len(second.state.skill_snapshots) == 1
 
     asyncio.run(scenario())
 
 
-def test_session_skill_load_updates_context_once_and_persists(tmp_path):
-    """显式加载更新请求投影和检查点，不重复追加模型消息。"""
+def test_session_skill_load_returns_body_without_changing_system_prompt(tmp_path):
+    """显式加载通过工具返回正文，系统提示词保持名称与描述，检查点仍保留快照。"""
     from factor_demo.autoresearch_agent_v2.agent import Session, SessionState
     from factor_demo.autoresearch_agent_v2.agent.model import Model
     from factor_demo.autoresearch_agent_v2.config import ModelConfig
@@ -211,10 +287,12 @@ def test_session_skill_load_updates_context_once_and_persists(tmp_path):
     async def scenario():
         """重复调用真实加载工具，状态和上下文均保持幂等。"""
         async with session:
-            assert "按父任务执行" not in session.loop.build_system_prompt()
+            initial_prompt = session.loop.build_system_prompt()
+            assert "按父任务执行" not in initial_prompt
             for _ in range(2):
-                await session.call("skill__load", {"skill_id": "analysis"})
-            assert session.loop.build_system_prompt().count("按父任务执行") == 1
+                result = await session.call("skill__load", {"skill_id": "analysis"})
+                assert "按父任务执行" in result["content"]
+            assert session.loop.build_system_prompt() == initial_prompt
             assert len(session.state.skill_snapshots) == 1
             assert session.state.messages == []
 

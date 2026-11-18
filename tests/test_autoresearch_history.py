@@ -1,7 +1,6 @@
 """验证压缩的消息边界、完整记录、失败回滚和会话续接。"""
 
 import asyncio
-import json
 from copy import deepcopy
 
 import litellm
@@ -12,6 +11,7 @@ from factor_demo.autoresearch_agent_v2.agent import Session
 from factor_demo.autoresearch_agent_v2.agent.history import (
     COMPACT_PROMPT,
     SUMMARY_PREFIX,
+    SUMMARY_SUFFIX,
     compact_history,
     get_context_messages,
 )
@@ -80,13 +80,13 @@ def test_compact_preserves_archive_and_replays_summary_with_complete_recent_turn
     assert asyncio.run(compact_history(state, make_model(), system_prompt="当前工具说明", keep_recent_turns=1))
     assert state.get_messages() == original
     assert state.compaction.end_index == 3
-    assert requests[0]["messages"][0]["content"] == COMPACT_PROMPT
+    assert requests[0]["messages"][0] == {"role": "system", "content": "当前工具说明"}
+    assert requests[0]["messages"][-1] == {"role": "user", "content": COMPACT_PROMPT}
     assert "tools" not in requests[0] and "tool_choice" not in requests[0]
-    material = json.loads(requests[0]["messages"][1]["content"])
-    assert material == {"system_prompt": "当前工具说明", "history": original[:3]}
+    assert requests[0]["messages"][1:-1] == original[:3]
 
     context = get_context_messages(state)
-    assert context[0]["content"] == SUMMARY_PREFIX + state.compaction.summary
+    assert context[0]["content"] == SUMMARY_PREFIX + state.compaction.summary + SUMMARY_SUFFIX
     assert context[1] == original[3]
     assert context[2]["tool_calls"] == original[4]["tool_calls"]
     assert context[3] == original[5]
@@ -131,8 +131,8 @@ def test_repeated_compaction_merges_previous_summary_and_only_new_prefix(tmp_pat
         assert await compact_history(state, model, system_prompt="系统", keep_recent_turns=1)
 
     asyncio.run(run())
-    material = json.loads(requests[1]["messages"][1]["content"])["history"]
-    assert material[0]["content"] == SUMMARY_PREFIX + "合并摘要1。"
+    material = requests[1]["messages"][1:-1]
+    assert material[0]["content"] == SUMMARY_PREFIX + "合并摘要1。" + SUMMARY_SUFFIX
     assert len(material) == 4
     assert state.compaction.end_index == 6
     assert get_context_messages(state)[-1] == state.messages[-1]

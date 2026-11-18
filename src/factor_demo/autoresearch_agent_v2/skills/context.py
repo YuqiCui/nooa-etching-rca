@@ -5,14 +5,14 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable, Sequence
 from pathlib import PurePosixPath
-from typing import Any
+from typing import Any, Literal
 
 from .registry import SkillRegistry, snapshot_digest
 from .typing import SkillSnapshot
 
 
 class SkillContext:
-    """保存激活快照，不向消息历史重复追加技能正文。"""
+    """保存激活快照，系统提示词仅展示技能名称与描述。"""
 
     def __init__(
         self,
@@ -20,6 +20,7 @@ class SkillContext:
         *,
         available_tools: Iterable[str] = (),
         snapshots: Sequence[dict[str, Any]] = (),
+        role: Literal["router", "worker"] = "router",
     ) -> None:
         """恢复可信快照并核对当前能力上限。
 
@@ -27,8 +28,10 @@ class SkillContext:
             registry: 宿主批准的技能目录。
             available_tools: 当前会话实际获准使用的工具标识。
             snapshots: 会话检查点中的既有快照。
+            role: 由宿主会话身份确定的角色，不接受模型指定。
         """
         self.registry = registry
+        self._role = role
         self._tools = frozenset(available_tools)
         self._active: dict[str, SkillSnapshot] = {}
         for saved in snapshots:
@@ -44,6 +47,8 @@ class SkillContext:
         description = snapshot.description
         if not self.registry.contains(description.skill_id):
             raise ValueError(f"技能已不在批准目录：{description.skill_id}")
+        if not self.registry.contains(description.skill_id, role=self._role):
+            raise PermissionError(f"当前角色不允许加载技能：{description.skill_id}")
         expected = snapshot_digest(description, snapshot.content, snapshot.resources)
         if expected != snapshot.sha256:
             raise ValueError("技能快照哈希不匹配")
@@ -71,7 +76,7 @@ class SkillContext:
     def load(self, skill_id: str) -> SkillSnapshot:
         """幂等激活一个技能，既有快照不被部署目录更新覆盖。"""
         if skill_id not in self._active:
-            snapshot = self.registry.load(skill_id)
+            snapshot = self.registry.load(skill_id, role=self._role)
             self._validate(snapshot)
             self._active[skill_id] = snapshot
         return self._active[skill_id].model_copy(deep=True)
@@ -94,7 +99,7 @@ class SkillContext:
         """返回技能目录及本会话激活标记，不返回引用正文。"""
         return [
             {**description.model_dump(), "loaded": description.skill_id in self._active}
-            for description in self.registry.catalog()
+            for description in self.registry.catalog(role=self._role)
         ]
 
     def read_resource(self, skill_id: str, path: str) -> str:
@@ -111,12 +116,9 @@ class SkillContext:
             raise ValueError("技能资源不存在") from error
 
     def instructions(self) -> str:
-        """按当前激活集合构建正文，不包含长引用文件内容。"""
-        catalog = json.dumps(self.catalog(), ensure_ascii=False)
-        parts = ["# 可用技能\n以下是宿主批准的技能目录。\n" + catalog]
-        for skill_id, snapshot in self._active.items():
-            parts.append(
-                f"# 已加载技能：{skill_id}\n版本：{snapshot.description.version}；"
-                f"sha256：{snapshot.sha256}\n{snapshot.content}"
-            )
-        return "\n\n".join(parts)
+        """仅投影当前角色可见的名称与描述，加载后也不拼接正文。"""
+        catalog = [
+            {"name": item.name, "description": item.description}
+            for item in self.registry.catalog(role=self._role)
+        ]
+        return "# 可用技能\n" + json.dumps(catalog, ensure_ascii=False) if catalog else ""

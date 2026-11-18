@@ -4,12 +4,13 @@ import json
 import logging
 from collections.abc import Awaitable, Callable
 
-from ..config import HistoryConfig
+from ..config import HistoryConfig, TimeBudgetConfig
 from ..tools import create_tool_factory
 from ..tools.result_guard import protect_tool_result
+from .budget import TimeBudget
 from .history import compact_history, get_context_messages
 from .model import Model
-from .prompts import SYSTEM_PROMPT, dataset_prompt
+from .prompts import SYSTEM_PROMPT, dataset_prompt, session_system_prompt
 from .typing import SessionState
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,7 @@ class AgentLoop:
         *,
         system_prompt: str = SYSTEM_PROMPT,
         history_config: HistoryConfig | None = None,
+        time_budget_config: TimeBudgetConfig | None = None,
     ) -> None:
         """绑定模型和会话，注册 finish 工具。
 
@@ -33,6 +35,7 @@ class AgentLoop:
             session: 保存完整对话历史的会话。
             system_prompt: 每次模型请求使用的系统提示词。
             history_config: 上下文预算、自动压缩百分比及默认保留轮数。
+            time_budget_config: Router 每轮提醒预算；None 使用 40 分钟及无限 token。
 
         """
         self.model = model
@@ -41,8 +44,10 @@ class AgentLoop:
         self.tools = create_tool_factory()
         self.terminal_tool = "finish"
         self.history_config = history_config if history_config is not None else HistoryConfig()
+        self.time_budget_config = time_budget_config or TimeBudgetConfig()
+        self.time_budget: TimeBudget | None = None
         self.context_providers: list[Callable[[], str]] = []
-        self.finish_hook: Callable[[str], Awaitable[bool]] | None = None
+        self.finish_hook: Callable[[str], Awaitable[bool | str]] | None = None
 
     async def before_run_hook(self, content: str) -> str:
         """在写入用户输入前执行钩子，默认原样返回。
@@ -72,9 +77,14 @@ class AgentLoop:
         return "\n\n".join(
             part
             for part in (
-                self.system_prompt,
+                session_system_prompt(
+                    self.system_prompt,
+                    self.session,
+                    {schema["function"]["name"] for schema in self.tools.schemas()},
+                ),
                 dataset_prompt(self.session),
                 self.tools.instructions(),
+                self.time_budget.initial_prompt() if self.time_budget is not None else "",
                 *(provider() for provider in self.context_providers),
             )
             if part
@@ -97,6 +107,11 @@ class AgentLoop:
             Exception: 模型请求、运行钩子或工具结果保存失败，原样向上传播。
 
         """
+        self.time_budget = (
+            TimeBudget(self.time_budget_config.seconds, self.time_budget_config.tokens)
+            if self.session.parent_agent_id is None else None
+        )
+        starting_tokens = self.model.reported_tokens if self.time_budget is not None else 0
         try:
             content = await self.before_run_hook(content)
             self.session.messages.append({"role": "user", "content": content})
@@ -122,6 +137,7 @@ class AgentLoop:
                         self.model,
                         system_prompt=system_prompt,
                         history_config=config,
+                        tools=schemas,
                     )
                     if changed:
                         messages = [
@@ -133,6 +149,18 @@ class AgentLoop:
                             "自动压缩上下文：输入 token %s → %s", input_tokens, compacted_tokens
                         )
                         input_tokens = compacted_tokens
+                if self.time_budget is not None:
+                    reminders = self.time_budget.reminders(
+                        self.model.reported_tokens - starting_tokens,
+                    )
+                    if reminders:
+                        # 压缩完成后追加，保证本次模型请求能看到全部新提醒。
+                        self.session.messages.extend(reminders)
+                        messages = [
+                            {"role": "system", "content": system_prompt},
+                            *get_context_messages(self.session),
+                        ]
+                        input_tokens = self.model.count_tokens(messages, tools=schemas)
                 if input_tokens >= config.context_window_tokens:
                     raise ValueError(
                         "当前请求已达到上下文 token 预算；请减少保留轮数、缩短输入或工具说明，"
@@ -152,10 +180,15 @@ class AgentLoop:
                         }
                     )
                     continue
+                invalid_wait_batch = len(tool_calls) > 1 and any(
+                    call["function"]["name"] == "WaitWorkers" for call in tool_calls
+                )
                 for index, tool_call in enumerate(tool_calls):
                     function = tool_call["function"]
                     failed = False
                     try:
+                        if invalid_wait_batch:
+                            raise ValueError("WaitWorkers 必须单独调用；本批次所有工具均未执行")
                         result = await self.tools.call(
                             function["name"],
                             json.loads(function["arguments"]),
@@ -183,9 +216,10 @@ class AgentLoop:
                                     "content": f"未执行：{self.terminal_tool} 已结束本轮。",
                                 }
                             )
-                        if self.finish_hook is None or await self.finish_hook(result):
+                        decision = await self.finish_hook(result) if self.finish_hook else True
+                        if decision is True:
                             return result
-                        result_message["content"] = (
+                        result_message["content"] = decision if isinstance(decision, str) else (
                             "当前工作尚未结束：请先处理宿主投递的结果或仍在运行的子任务。"
                         )
                         break

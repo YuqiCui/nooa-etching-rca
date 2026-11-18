@@ -1,0 +1,749 @@
+{
+  "source_commit": "39163dd30f703a79079e2d2446545cff3c453738",
+  "notice": "改编自 DeepSeek Harness fs-patch 测试；Copyright 2025 OpenAI；许可证见 src/factor_demo/autoresearch_agent_v2/tools/builtin_tools/files/PATCH_LICENSE。",
+  "text": [
+    {
+      "name": "multiple hunks search the original text",
+      "before": "foo\nbar\nbaz\nqux\n",
+      "body": [
+        "@@",
+        " foo",
+        "-bar",
+        "+BAR",
+        "@@",
+        " baz",
+        "-qux",
+        "+QUX"
+      ],
+      "after": "foo\nBAR\nbaz\nQUX\n"
+    },
+    {
+      "name": "interleaved replacements and an EOF addition",
+      "before": "a\nb\nc\nd\ne\nf\n",
+      "body": [
+        "@@",
+        " a",
+        "-b",
+        "+B",
+        "@@",
+        " c",
+        " d",
+        "-e",
+        "+E",
+        "@@",
+        " f",
+        "+g",
+        "*** End of File"
+      ],
+      "after": "a\nB\nc\nd\nE\nf\ng\n"
+    },
+    {
+      "name": "an append precedes a removal in patch order",
+      "before": "line1\nline2\nline3\n",
+      "body": [
+        "@@",
+        "+after-context",
+        "+second-line",
+        "@@",
+        " line1",
+        "-line2",
+        "-line3",
+        "+line2-replacement"
+      ],
+      "after": "line1\nline2-replacement\nafter-context\nsecond-line\n"
+    },
+    {
+      "name": "ASCII patch matches Unicode dashes",
+      "before": "import asyncio  # local import – avoids top‑level dep\n",
+      "body": [
+        "-import asyncio  # local import - avoids top-level dep",
+        "+import asyncio  # HELLO"
+      ],
+      "after": "import asyncio  # HELLO\n"
+    },
+    {
+      "name": "first line replacement",
+      "before": "foo\nbar\nbaz\n",
+      "body": [
+        "-foo",
+        "+FOO",
+        " bar"
+      ],
+      "after": "FOO\nbar\nbaz\n"
+    },
+    {
+      "name": "last line replacement",
+      "before": "foo\nbar\nbaz\n",
+      "body": [
+        " foo",
+        " bar",
+        "-baz",
+        "+BAZ"
+      ],
+      "after": "foo\nbar\nBAZ\n"
+    },
+    {
+      "name": "pure insertion with an EOF marker",
+      "before": "foo\nbar\nbaz\n",
+      "body": [
+        "+quux",
+        "*** End of File"
+      ],
+      "after": "foo\nbar\nbaz\nquux\n"
+    },
+    {
+      "name": "exact sequence",
+      "before": "foo\nbar\nbaz\n",
+      "body": [
+        "-bar",
+        "-baz",
+        "+done"
+      ],
+      "after": "foo\ndone\n"
+    },
+    {
+      "name": "trailing whitespace is ignored on both sides",
+      "before": "foo   \nbar\t\t\n",
+      "body": [
+        "-foo\t",
+        "-bar ",
+        "+done"
+      ],
+      "after": "done\n"
+    },
+    {
+      "name": "leading and trailing whitespace is ignored",
+      "before": "    foo   \n   bar\t\n",
+      "body": [
+        "- foo",
+        "-bar",
+        "+done"
+      ],
+      "after": "done\n"
+    },
+    {
+      "name": "exact match wins over an earlier trimmed match",
+      "before": "x \nx\n",
+      "body": [
+        "-x",
+        "+X"
+      ],
+      "after": "x \nX\n"
+    },
+    {
+      "name": "trailing-only match wins over an earlier fully trimmed match",
+      "before": " x\nx \n",
+      "body": [
+        "-x",
+        "+X"
+      ],
+      "after": " x\nX\n"
+    },
+    {
+      "name": "trimmed match wins over an earlier punctuation match",
+      "before": "x–y\n x-y \n",
+      "body": [
+        "-x-y",
+        "+X"
+      ],
+      "after": "x–y\nX\n"
+    },
+    {
+      "name": "each hunk takes the first remaining repeated sequence",
+      "before": "x\nx\nx\n",
+      "body": [
+        "-x",
+        "+first",
+        "@@",
+        "-x",
+        "+second"
+      ],
+      "after": "first\nsecond\nx\n"
+    },
+    {
+      "name": "anchors advance beyond the matching line",
+      "before": "fn a\nx\nfn b\nx\n",
+      "body": [
+        "@@ fn b",
+        "-x",
+        "+X"
+      ],
+      "after": "fn a\nx\nfn b\nX\n"
+    },
+    {
+      "name": "repeated anchors use the advancing cursor",
+      "before": "fn\nx\nfn\nx\n",
+      "body": [
+        "@@ fn",
+        "-x",
+        "+first",
+        "@@ fn",
+        "-x",
+        "+second"
+      ],
+      "after": "fn\nfirst\nfn\nsecond\n"
+    },
+    {
+      "name": "anchors also use punctuation tolerance",
+      "before": "fn “a”\nx\n",
+      "body": [
+        "@@ fn \"a\"",
+        "-x",
+        "+X"
+      ],
+      "after": "fn “a”\nX\n"
+    },
+    {
+      "name": "empty-file insertion",
+      "before": "",
+      "body": [
+        "+hello"
+      ],
+      "after": "hello\n"
+    },
+    {
+      "name": "insertion after an unterminated final line",
+      "before": "hello",
+      "body": [
+        "+world"
+      ],
+      "after": "hello\nworld\n"
+    },
+    {
+      "name": "insertion before the final empty source line",
+      "before": "hello\n\n",
+      "body": [
+        "+world"
+      ],
+      "after": "hello\nworld\n"
+    },
+    {
+      "name": "insertion into a one-newline file",
+      "before": "\n",
+      "body": [
+        "+hello"
+      ],
+      "after": "hello\n"
+    },
+    {
+      "name": "anchored pure insertion still appends at EOF",
+      "before": "fn\nx\ny\n",
+      "body": [
+        "@@ fn",
+        "+last"
+      ],
+      "after": "fn\nx\ny\nlast\n"
+    },
+    {
+      "name": "multiple pure insertions retain patch order",
+      "before": "x\n",
+      "body": [
+        "+first",
+        "@@",
+        "+second"
+      ],
+      "after": "x\nfirst\nsecond\n"
+    },
+    {
+      "name": "pure deletion retains surrounding lines",
+      "before": "a\nb\nc\n",
+      "body": [
+        "-b"
+      ],
+      "after": "a\nc\n"
+    },
+    {
+      "name": "deletion to empty text",
+      "before": "a\n",
+      "body": [
+        "-a"
+      ],
+      "after": ""
+    },
+    {
+      "name": "replacement adds a missing final newline",
+      "before": "a",
+      "body": [
+        "-a",
+        "+b"
+      ],
+      "after": "b\n"
+    },
+    {
+      "name": "EOF prefers the tail over an earlier exact match",
+      "before": "x\nx \n",
+      "body": [
+        "-x",
+        "+X",
+        "*** End of File"
+      ],
+      "after": "x\nX\n"
+    },
+    {
+      "name": "EOF may search before the sequential cursor",
+      "before": "x\n",
+      "body": [
+        "@@ x",
+        "-x",
+        "+X",
+        "*** End of File"
+      ],
+      "after": "X\n"
+    },
+    {
+      "name": "overlapping EOF hunks retain upstream replacement order",
+      "before": "x\n",
+      "body": [
+        "-x",
+        "+first",
+        "@@",
+        "-x",
+        "+second",
+        "*** End of File"
+      ],
+      "after": "first\n"
+    },
+    {
+      "name": "trailing empty context retries without both sentinels",
+      "before": "a\n",
+      "body": [
+        "-a",
+        "+b",
+        ""
+      ],
+      "after": "b\n"
+    },
+    {
+      "name": "trailing empty old line can retry without trimming the insertion",
+      "before": "a\n",
+      "body": [
+        "-a",
+        "-",
+        "+b"
+      ],
+      "after": "b\n"
+    },
+    {
+      "name": "empty retry pattern matches the cursor",
+      "before": "",
+      "body": [
+        "-",
+        "+b"
+      ],
+      "after": "b\n"
+    },
+    {
+      "name": "empty retry after an anchor matches its cursor",
+      "before": "a\n",
+      "body": [
+        "@@ a",
+        "-",
+        "+b"
+      ],
+      "after": "a\nb\n"
+    },
+    {
+      "name": "explicit context is replaced from patch text in NormalizeToLf",
+      "before": "  context\r\nold\n",
+      "body": [
+        " context",
+        "-old",
+        "+new"
+      ],
+      "after": "context\nnew\n"
+    },
+    {
+      "name": "CRLF input retains CR on untouched lines",
+      "before": "a\r\nb\r\n",
+      "body": [
+        "-a",
+        "+A"
+      ],
+      "after": "A\nb\r\n"
+    },
+    {
+      "name": "appending does not normalize existing CRLF",
+      "before": "a\r\n",
+      "body": [
+        "+b"
+      ],
+      "after": "a\r\nb\n"
+    },
+    {
+      "name": "lone CR remains an ordinary character",
+      "before": "a\rb\n",
+      "body": [
+        "-a\rb",
+        "+c"
+      ],
+      "after": "c\n"
+    },
+    {
+      "name": "non-ASCII content survives unchanged",
+      "before": "你好🙂\n",
+      "body": [
+        " 你好🙂",
+        "+é"
+      ],
+      "after": "你好🙂\né\n"
+    },
+    {
+      "name": "long interior whitespace survives all failed earlier candidates",
+      "before": "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                x–y\n",
+      "body": [
+        "-x-y",
+        "+done"
+      ],
+      "after": "done\n"
+    },
+    {
+      "name": "pattern longer than the file",
+      "before": "one\n",
+      "body": [
+        "-too",
+        "-many",
+        "-lines"
+      ],
+      "failure": {
+        "hunkLineNumber": 3,
+        "stage": "oldLines",
+        "searchStart": 0,
+        "pattern": [
+          "too",
+          "many",
+          "lines"
+        ]
+      }
+    },
+    {
+      "name": "anchor not found",
+      "before": "a\n",
+      "body": [
+        "@@ missing",
+        "-a",
+        "+b"
+      ],
+      "failure": {
+        "hunkLineNumber": 3,
+        "stage": "context",
+        "searchStart": 0,
+        "pattern": [
+          "missing"
+        ]
+      }
+    },
+    {
+      "name": "old content not found after an anchor",
+      "before": "fn\na\n",
+      "body": [
+        "@@ fn",
+        "-missing",
+        "+b"
+      ],
+      "failure": {
+        "hunkLineNumber": 3,
+        "stage": "oldLines",
+        "searchStart": 1,
+        "pattern": [
+          "missing"
+        ]
+      }
+    },
+    {
+      "name": "later context exists only before the previous hunk",
+      "before": "fn\na\n",
+      "body": [
+        "-a",
+        "+b",
+        "@@ fn",
+        "+c"
+      ],
+      "failure": {
+        "hunkLineNumber": 5,
+        "stage": "context",
+        "searchStart": 2,
+        "pattern": [
+          "fn"
+        ]
+      }
+    },
+    {
+      "name": "later old lines exist only before the previous hunk",
+      "before": "a\nb\n",
+      "body": [
+        "-b",
+        "+B",
+        "@@",
+        "-a",
+        "+A"
+      ],
+      "failure": {
+        "hunkLineNumber": 5,
+        "stage": "oldLines",
+        "searchStart": 2,
+        "pattern": [
+          "a"
+        ]
+      }
+    },
+    {
+      "name": "inserted text is not a later search candidate",
+      "before": "a\n",
+      "body": [
+        "-a",
+        "+b",
+        "@@",
+        "-b",
+        "+c"
+      ],
+      "failure": {
+        "hunkLineNumber": 5,
+        "stage": "oldLines",
+        "searchStart": 1,
+        "pattern": [
+          "b"
+        ]
+      }
+    },
+    {
+      "name": "EOF does not fall back to an earlier match",
+      "before": "x\ny\n",
+      "body": [
+        "-x",
+        "+X",
+        "*** End of File"
+      ],
+      "failure": {
+        "hunkLineNumber": 3,
+        "stage": "oldLines",
+        "searchStart": 0,
+        "pattern": [
+          "x"
+        ]
+      }
+    },
+    {
+      "name": "failed sentinel retry reports the original pattern",
+      "before": "a\n",
+      "body": [
+        "-missing",
+        "-",
+        "+b",
+        "+"
+      ],
+      "failure": {
+        "hunkLineNumber": 3,
+        "stage": "oldLines",
+        "searchStart": 0,
+        "pattern": [
+          "missing",
+          ""
+        ]
+      }
+    },
+    {
+      "name": "BOM is not Rust whitespace",
+      "before": "﻿a\n",
+      "body": [
+        "-a",
+        "+b"
+      ],
+      "failure": {
+        "hunkLineNumber": 3,
+        "stage": "oldLines",
+        "searchStart": 0,
+        "pattern": [
+          "a"
+        ]
+      }
+    },
+    {
+      "name": "combining marks are not Unicode-normalized",
+      "before": "é\n",
+      "body": [
+        "-é",
+        "+b"
+      ],
+      "failure": {
+        "hunkLineNumber": 3,
+        "stage": "oldLines",
+        "searchStart": 0,
+        "pattern": [
+          "é"
+        ]
+      }
+    },
+    {
+      "name": "interior EN QUAD is outside the punctuation mapping",
+      "before": "a b\n",
+      "body": [
+        "-a b",
+        "+b"
+      ],
+      "failure": {
+        "hunkLineNumber": 3,
+        "stage": "oldLines",
+        "searchStart": 0,
+        "pattern": [
+          "a b"
+        ]
+      }
+    },
+    {
+      "name": "lone CR does not split source lines",
+      "before": "a\rb",
+      "body": [
+        "-a",
+        "-b",
+        "+c"
+      ],
+      "failure": {
+        "hunkLineNumber": 3,
+        "stage": "oldLines",
+        "searchStart": 0,
+        "pattern": [
+          "a",
+          "b"
+        ]
+      }
+    }
+  ],
+  "syntax_errors": [
+    {
+      "input": "",
+      "line": 1
+    },
+    {
+      "input": " \t\n　",
+      "line": 2
+    },
+    {
+      "input": "not a patch",
+      "line": 1
+    },
+    {
+      "input": "*** Begin Patch",
+      "line": 1
+    },
+    {
+      "input": "*** Begin Patch\n*** Add File: a\n+x",
+      "line": 3
+    },
+    {
+      "input": "﻿*** Begin Patch\n*** End Patch",
+      "line": 1
+    },
+    {
+      "input": "<<EOF\nbad\n*** End Patch\nEOF",
+      "line": 2
+    },
+    {
+      "input": "<<EOF\n*** Begin Patch\nbad\nEOF",
+      "line": 3
+    },
+    {
+      "input": "<<EOF\n*** Begin Patch\n*** End Patch\nSTOP",
+      "line": 1
+    },
+    {
+      "input": "<<EOF\n*** End Patch\nEOF",
+      "line": 1
+    },
+    {
+      "input": "apply_patch <<EOF\n*** Begin Patch\n*** End Patch\nEOF",
+      "line": 1
+    },
+    {
+      "input": "--- a/file\n+++ b/file\n@@ -1 +1 @@\n-a\n+b",
+      "line": 1
+    },
+    {
+      "input": "*** Begin Patch\n\n*** End Patch",
+      "line": 2
+    },
+    {
+      "input": "*** Begin Patch\n*** Add File: \n*** End Patch",
+      "line": 2
+    },
+    {
+      "input": "*** Begin Patch\n*** Unknown: a\n*** End Patch",
+      "line": 2
+    },
+    {
+      "input": "*** Begin Patch\n*** Add File: a\nunprefixed\n*** End Patch",
+      "line": 3
+    },
+    {
+      "input": "*** Begin Patch\n*** Delete File: a\n+content\n*** End Patch",
+      "line": 3
+    },
+    {
+      "input": "*** Begin Patch\n*** Move to: b\n*** End Patch",
+      "line": 2
+    },
+    {
+      "input": "*** Begin Patch\n*** Update File: a\n*** End Patch",
+      "line": 2
+    },
+    {
+      "input": "*** Begin Patch\n*** Update File: a\n*** Move to: b\n*** End Patch",
+      "line": 2
+    },
+    {
+      "input": "*** Begin Patch\n*** Update File: a\n*** Move to: b\n*** Move to: c\n*** End Patch",
+      "line": 4
+    },
+    {
+      "input": "*** Begin Patch\n*** Update File: a\n@@\n*** Move to: b\n*** End Patch",
+      "line": 4
+    },
+    {
+      "input": "*** Begin Patch\n*** Update File: a\nunprefixed\n*** End Patch",
+      "line": 3
+    },
+    {
+      "input": "*** Begin Patch\n*** Update File: a\n@@\n*** End Patch",
+      "line": 4
+    },
+    {
+      "input": "*** Begin Patch\n*** Update File: a\n@@\n@@ next\n*** End Patch",
+      "line": 4
+    },
+    {
+      "input": "*** Begin Patch\n*** Update File: a\n@@\n*** End of File\n*** End Patch",
+      "line": 4
+    },
+    {
+      "input": "*** Begin Patch\n*** Update File: a\n@@\n*** Add File: b\n*** End Patch",
+      "line": 4
+    },
+    {
+      "input": "*** Begin Patch\n*** Update File: a\n*** Delete File: b\n*** End Patch",
+      "line": 2
+    },
+    {
+      "input": "*** Begin Patch\n*** Update File: a\n+a\n*** End of File\n+b\n*** End Patch",
+      "line": 5
+    },
+    {
+      "input": "*** Begin Patch\n*** End Patch\n+later\n*** End Patch",
+      "line": 3
+    },
+    {
+      "input": "*** Begin Patch\n*** Environment ID: env-1\n*** End Patch",
+      "line": 2
+    },
+    {
+      "input": "*** Begin Patch\n*** Environment ID:\n*** End Patch",
+      "line": 2
+    },
+    {
+      "input": "*** Begin Patch\n*** Add File: a\n*** Environment ID: env-1\n*** End Patch",
+      "line": 3
+    },
+    {
+      "input": "*** Begin Patch\n*** Update File: a\n+a\n*** Environment ID: env-1\n*** End Patch",
+      "line": 4
+    }
+  ]
+}

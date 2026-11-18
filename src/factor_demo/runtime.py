@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .providers import Provider
 
@@ -22,7 +22,20 @@ class RuntimeSettings(BaseModel):
     summary_threshold: int | None = None
     preserve_recent: int = 10
     summary_target_chars: int = 8000
-    request_timeout: int = 1800
+    compact_on_worker_reassignment: bool = Field(default=False, strict=True)
+    """核心 Agent 复用 Worker 执行新任务前压缩历史，旧版 Agent 不使用此配置。"""
+    task_timeout: int = Field(default=7200, gt=0)
+    """核心 Agent 每轮研究的总时限，包含 API 重试和退避，单位秒。"""
+    router_time_budget: float = Field(default=2400, gt=0, strict=True, allow_inf_nan=False)
+    """Router 每轮任务的时间提醒预算，单位秒；默认 40 分钟，不强制终止。"""
+    router_token_budget: int | None = Field(default=None, gt=0, strict=True)
+    """Router 每轮任务的累计 token 提醒预算；None 表示无限。"""
+    request_timeout: int = Field(default=60, gt=0)
+    measure_api_ttft: bool = Field(default=True, strict=True)
+    """核心 Agent 使用流式接收统计首个有效输出的耗时。"""
+    request_max_retries: int = Field(default=10, ge=0)
+    request_retry_initial_delay: float = Field(default=1, gt=0, allow_inf_nan=False)
+    request_retry_max_delay: float = Field(default=300, gt=0, allow_inf_nan=False)
     review_provider: str = "auto"
 
     @model_validator(mode="after")
@@ -38,8 +51,6 @@ class RuntimeSettings(BaseModel):
             raise ValueError("Invalid summary settings")
         if not 0 < self.anthropic_thinking_budget < self.max_output_tokens:
             raise ValueError("Thinking budget must leave room for an answer")
-        if self.request_timeout < 1:
-            raise ValueError("Invalid request timeout")
         return self
 
     @property
@@ -82,7 +93,16 @@ def build_client(provider: Provider, settings: RuntimeSettings):
         "api_key": provider.api_key,
         "max_tokens": settings.max_output_tokens,
         "drop_params": False,
-        "retry_config": RetryConfig(max_retries=1, rate_limit_extra_retries=0),
+        "retry_config": RetryConfig(
+            max_retries=settings.request_max_retries,
+            base_delay=settings.request_retry_initial_delay,
+            max_delay=settings.request_retry_max_delay,
+            exponential_base=2,
+            jitter_factor=0,
+            rate_limit_extra_retries=0,
+            rate_limit_base_delay=settings.request_retry_initial_delay,
+            rate_limit_backoff_base=2,
+        ),
         "http_config": HttpConfig(
             read_timeout=settings.request_timeout, request_timeout=settings.request_timeout
         ),

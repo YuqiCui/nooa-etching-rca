@@ -26,6 +26,22 @@ MAX_READ_BYTES = 12 * 1024
 _MAX_MATCH_LINES = 8
 
 
+def _file_error_result(exc: FileToolError | UnicodeError | OSError) -> dict[str, Any]:
+    """统一生成不回显提交内容的文件错误，供普通操作和补丁回执复用。"""
+    if isinstance(exc, FileToolError):
+        return exc.result
+    if isinstance(exc, UnicodeError):
+        return {"error": "invalid_text", "hint": "Use valid UTF-8 text without binary data."}
+    code, hint = {
+        errno.ENOENT: ("not_found", "Check the file path."),
+        errno.EISDIR: ("not_file", "Use a regular text file."),
+        errno.EACCES: ("permission_denied", "Use a file with the required permissions."),
+        errno.EPERM: ("permission_denied", "Use a file with the required permissions."),
+        errno.EEXIST: ("file_changed", "Read the target again before retrying."),
+    }.get(exc.errno, ("io_error", "Check file permissions and available storage."))
+    return {"error": code, "hint": hint}
+
+
 def _recover_file_errors(function: Callable[..., Any]) -> Callable[..., Any]:
     """将预期文件错误转为有界结果，保留关闭错误和意外故障的传播。"""
 
@@ -35,19 +51,8 @@ def _recover_file_errors(function: Callable[..., Any]) -> Callable[..., Any]:
         self.files.require_open()
         try:
             return function(self, *args, **kwargs)
-        except FileToolError as exc:
-            return exc.result
-        except UnicodeError:
-            return {"error": "invalid_text", "hint": "Use valid UTF-8 text without binary data."}
-        except OSError as exc:
-            code, hint = {
-                errno.ENOENT: ("not_found", "Check the file path."),
-                errno.EISDIR: ("not_file", "Use a regular text file."),
-                errno.EACCES: ("permission_denied", "Use a file with the required permissions."),
-                errno.EPERM: ("permission_denied", "Use a file with the required permissions."),
-                errno.EEXIST: ("file_changed", "Read the target again before retrying."),
-            }.get(exc.errno, ("io_error", "Check file permissions and available storage."))
-            return {"error": code, "hint": hint}
+        except (FileToolError, UnicodeError, OSError) as exc:
+            return _file_error_result(exc)
 
     return invoke
 
@@ -90,7 +95,7 @@ def _match_details(text: str, needle: str) -> tuple[int, list[int]]:
 class FileTools:
     """同一会话共享读取记录，并在关闭时撤销文件访问。"""
 
-    tool_names: ClassVar[tuple[str, ...]] = ("read_file", "write_file", "edit_file")
+    tool_names: ClassVar[tuple[str, ...]] = ("read_file", "write_file", "edit_file", "apply_patch")
     """启动前可检查的公开工具名称。"""
 
     namespace: ClassVar[str] = "files"
@@ -117,7 +122,7 @@ class FileTools:
             session: 提供已授权 workdir 的会话。
 
         Yields:
-            三个文件方法共享读取记录的工具实例。
+            文件方法共享读取记录的工具实例。
         """
         tools = cls(session.state.workdir)
         try:
@@ -151,10 +156,44 @@ class FileTools:
                     "replace_all=true 替换全部。new_string 为空表示删除。"
                 ),
             ),
+            (
+                "apply_patch",
+                self.apply_patch,
+                (
+                    "用 Codex 格式补丁一次新增、更新、删除或移动工作目录内的文本文件。"
+                    "修改前须读取源文件，删除前须完整读取。跨文件或多处修改优先使用。"
+                    "先检查整份补丁；执行中遇错停止，已完成操作不回滚。"
+                ),
+            ),
         ):
             factory.register_callable(
                 name, function, description=description, recover_validation_errors=True
             )
+        factory.add_instructions(
+            "apply_patch(input) 使用 *** Begin Patch / *** End Patch 包围补丁。"
+            "使用 *** Add File: path 和 +正文新增；*** Delete File: path 删除；"
+            "*** Update File: path 后用 @@ 分隔修改区域，空格开头为上下文，"
+            "- 开头删除，+ 开头新增。Update File 后可紧接 *** Move to: path。"
+            "*** End of File 将最后区域锚定在文件尾。只接受工作目录内的相对路径。"
+            "源文件被外部修改时须重新读取；移动目标必须不存在。"
+            "预检查失败不修改文件，执行失败需根据 completed、affected_paths、"
+            "uncertain_paths 重新读取后再重试。",
+            names=("apply_patch",),
+        )
+
+    @_recover_file_errors
+    def apply_patch(self, input: str) -> dict[str, Any]:
+        """解析、预检查并依次执行跨文件补丁。
+
+        Args:
+            input: Codex 格式补丁；最多 1 MiB、128 个文件操作。
+
+        Returns:
+            简短的逐操作回执；失败时区分预检查、已完成和结果不确定的路径。
+        """
+        from .patching import PatchExecutor
+
+        return PatchExecutor(self).execute(input)
 
     def _remember_range(self, key: str, digest: bytes, start: int, end: int, total: int) -> None:
         """只累计相同内容版本中实际交付的完整行，连续分页可建立完整读取记录。"""
