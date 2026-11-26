@@ -275,6 +275,37 @@ def create_app(project: Path | None = None) -> FastAPI:
         except (ValueError, OSError):
             data_state = None  # Historical transcript-only sessions remain readable.
 
+        system_prompts: dict[str, str] = {}
+        worker_tasks: dict[str, str] = {}
+        ar_dir = run / ".autoresearch"
+        main_sys = ar_dir / "system_prompt.txt"
+        if main_sys.exists():
+            try:
+                system_prompts["main"] = main_sys.read_text(encoding="utf-8")
+            except OSError:
+                pass
+        children_dir = ar_dir / "children"
+        if children_dir.exists():
+            for child_dir in children_dir.iterdir():
+                if not child_dir.is_dir():
+                    continue
+                child_sys = child_dir / "system_prompt.txt"
+                if child_sys.exists():
+                    try:
+                        system_prompts[child_dir.name] = child_sys.read_text(encoding="utf-8")
+                    except OSError:
+                        pass
+                child_sess = child_dir / "session.json"
+                if child_sess.exists():
+                    try:
+                        cdata = json.loads(child_sess.read_text(encoding="utf-8"))
+                        for msg in cdata.get("messages") or []:
+                            if msg.get("role") == "user" and isinstance(msg.get("content"), str):
+                                worker_tasks[child_dir.name] = msg["content"]
+                                break
+                    except (OSError, ValueError):
+                        pass
+
         return {
             **info(run),
             "history": history,
@@ -283,6 +314,8 @@ def create_app(project: Path | None = None) -> FastAPI:
             "last_event_id": last_id,
             "dataset_state": data_state,
             "formula_studies": await asyncio.to_thread(StudyStore(run / ".formula-lab").catalog),
+            "system_prompts": system_prompts,
+            "worker_tasks": worker_tasks,
         }
 
     @app.get("/api/sessions/{name}/formula-lab")

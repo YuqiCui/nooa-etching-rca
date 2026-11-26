@@ -65,6 +65,7 @@ class WebModel(Model):
         self._event_source = events
         self._events = None
         self.pending_guidance = []
+        self._last_system_prompt: str | None = None
 
     @property
     def events(self):
@@ -99,6 +100,19 @@ class WebModel(Model):
             messages = [*messages, guidance]
             self.events.emit("steering.applied", message=item["message"], source=item["source"])
         write_json(self.checkpoint, self.state.model_dump(mode="json"))
+        system_parts = [
+            m.get("content", "")
+            for m in messages
+            if m.get("role") == "system" and isinstance(m.get("content"), str)
+        ]
+        system_text = "\n\n".join(part for part in system_parts if part.strip())
+        if system_text and system_text != self._last_system_prompt:
+            self._last_system_prompt = system_text
+            self.events.emit("agent.system_prompt", content=system_text)
+            with contextlib.suppress(OSError):
+                (self.checkpoint.parent / "system_prompt.txt").write_text(
+                    system_text, encoding="utf-8"
+                )
         call_id = uuid.uuid4().hex
         self.events.emit("model.start", call_id=call_id)
         self.events.emit("model.waiting")
@@ -240,8 +254,10 @@ def create_runtime(run, folder, config, events):
         previous = child.loop.before_run_hook
 
         async def before_run(content):
-            """启动资源后给子工具安装相同的事件记录。"""
+            """启动资源后给子工具安装相同的事件记录，并上报分配给子 Worker 的任务正文。"""
             observe_tool_calls(child, child.loop.model.events)
+            if isinstance(content, str) and content.strip():
+                child.loop.model.events.emit("agent.task", task=content)
             return await previous(content)
 
         child.loop.before_run_hook = before_run
