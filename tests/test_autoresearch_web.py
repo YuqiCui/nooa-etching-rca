@@ -139,7 +139,14 @@ def test_turn_persists_json_files_results_and_frontend_events(tmp_path, monkeypa
     responses = iter([
         [call("write_file", {"path": "research.json", "content": json.dumps({"status": "running"})}, "t1"),
          call("write_file", {"path": "artifacts/01_check/report.md", "content": "研究结果"}, "w1")],
-        [call("write_file", {"path": "research.json", "content": json.dumps({"status": "completed"})}, "t2")],
+        [call("apply_patch", {"input": "\n".join([
+            "*** Begin Patch",
+            "*** Update File: research.json",
+            "@@",
+            f"-{json.dumps({'status': 'running'})}",
+            f"+{json.dumps({'status': 'completed'})}",
+            "*** End Patch",
+        ])}, "t2")],
         [call("finish", {"content": "已完成，见 [报告](artifacts/01_check/report.md)"}, "finish")],
         [call("read_file", {"path": "research.json"}, "l1")],
         [call("finish", {"content": "已有研究已保留"}, "finish")]

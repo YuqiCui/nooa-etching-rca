@@ -146,7 +146,7 @@ class FileTools:
             (
                 "write_file",
                 self.write_file,
-                "创建或完整覆盖文本文件。覆盖前须完整读取已有文件；局部修改优先使用 edit_file。",
+                "创建新的文本文件，不覆盖已有文件；修改已有文件请先读取后使用 apply_patch。",
             ),
             (
                 "edit_file",
@@ -253,10 +253,27 @@ class FileTools:
                 size = len(line.encode("utf-8"))
                 if size > remaining:
                     if not output:
+                        prefix_bytes = len(f"{index + 1}\t".encode())
+                        line_bytes = size - prefix_bytes
+                        max_bytes = remaining - prefix_bytes
+                        skip_hint = (
+                            f" Or pass offset={index + 2} to read lines after it."
+                            if index + 1 < total
+                            else ""
+                        )
                         raise FileToolError(
                             "line_too_long",
-                            "Use a streaming tool to inspect this line.",
+                            (
+                                f"Line {index + 1} is {line_bytes} UTF-8 bytes, exceeding the "
+                                f"{max_bytes}-byte single-read limit of read_file "
+                                "(lines are not truncated). Inspect or slice it with a "
+                                "shell/Python command (e.g. format minified JSON/text or read "
+                                f"a byte/character slice).{skip_hint}"
+                            ),
                             line=index + 1,
+                            total_lines=total,
+                            line_bytes=line_bytes,
+                            max_bytes=max_bytes,
                         )
                     break
                 output.append(line)
@@ -270,32 +287,27 @@ class FileTools:
 
     @_recover_file_errors
     def write_file(self, path: str, content: str) -> str | dict[str, Any]:
-        """新建或完整覆盖文件，成功后只返回简短确认。
+        """仅创建新文件，成功后只返回简短确认；目标已存在时报错并引导使用 apply_patch。
 
         Args:
-            path: 工作目录内的目标文件，可包含尚未创建的父目录。
+            path: 工作目录内尚未存在的目标文件，可包含尚未创建的父目录。
             content: 完整 UTF-8 文本，不自动增加末尾换行。
 
         Returns:
-            created、written 或 unchanged；前置条件不满足时返回错误。
+            created；文件已存在或参数非法时返回有界错误。
         """
         encoded = _encode(content)
         with self.files.open_parent(path, create=True) as (directory_fd, name, key):
             snapshot = self.files.read_bytes(directory_fd, name)
             if snapshot is not None:
-                state = self._reads.get(key)
-                if state is None or not state.complete:
-                    raise FileToolError("read_required", "Read the entire file before overwriting.")
-                if state.digest != sha256(snapshot[0]).digest():
-                    raise FileToolError(
-                        "file_changed", "Read the entire current file before retrying."
-                    )
-                encoded = _encode(content, snapshot[0])
-                if encoded == snapshot[0]:
-                    return "unchanged"
-            self.files.replace_bytes(directory_fd, name, encoded, snapshot)
+                raise FileToolError(
+                    "already_exists",
+                    "File already exists. write_file only creates new files; "
+                    "read the file and use apply_patch to modify it.",
+                )
+            self.files.replace_bytes(directory_fd, name, encoded, None)
             self._reads[key] = FileReadState(digest=sha256(encoded).digest(), complete=True)
-            return "created" if snapshot is None else "written"
+            return "created"
 
     @_recover_file_errors
     def edit_file(

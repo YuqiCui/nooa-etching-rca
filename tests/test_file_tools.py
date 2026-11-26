@@ -37,19 +37,20 @@ def make_session(root, identity="s"):
     return session
 
 
-def test_create_edit_delete_and_overwrite_use_minimal_confirmations(files, tmp_path):
-    """新文件不需要读取，后续精确编辑、删除和完整覆盖不回显内容。"""
+def test_create_edit_delete_and_reject_existing_write_use_minimal_confirmations(files, tmp_path):
+    """新文件不需要读取，已有文件不允许 write_file 覆盖并引导使用 apply_patch。"""
     assert files.write_file("nested/a.py", "first = 1\nlast = 2") == "created"
     path = tmp_path / "nested/a.py"
     assert path.read_bytes() == b"first = 1\nlast = 2"
     assert files.edit_file("nested/a.py", "first = 1", "first = 3") == "edited"
     assert files.edit_file("nested/a.py", "last = 2", "") == "edited"
     assert path.read_bytes() == b"first = 3\n"
-    assert files.write_file("nested/a.py", "replacement") == "written"
-    assert path.read_bytes() == b"replacement"
+    exists_error = files.write_file("nested/a.py", "replacement")
+    assert exists_error["error"] == "already_exists"
+    assert "apply_patch" in exists_error["hint"]
+    assert path.read_bytes() == b"first = 3\n"
     before = path.stat()
-    assert files.write_file("nested/a.py", "replacement") == "unchanged"
-    assert files.edit_file("nested/a.py", "replacement", "replacement") == "unchanged"
+    assert files.edit_file("nested/a.py", "first = 3\n", "first = 3\n") == "unchanged"
     assert path.stat().st_ino == before.st_ino
     assert path.stat().st_mtime_ns == before.st_mtime_ns
 
@@ -66,19 +67,21 @@ def test_read_preserves_indentation_and_paginates_from_one(files, tmp_path):
 
 
 def test_default_page_is_200_lines_and_ranges_must_cover_whole_version(files, tmp_path):
-    """不连续或重复分页不能伪装成完整读取，读齐后才允许覆盖。"""
+    """不连续或重复分页不能伪装成完整读取；已有文件始终拒绝 write_file。"""
     path = tmp_path / "a.py"
     path.write_text("x\n" * 250, encoding="utf-8")
-    assert files.write_file("a.py", "bad")["error"] == "read_required"
+    error = files.write_file("a.py", "bad")
+    assert error["error"] == "already_exists"
+    assert "apply_patch" in error["hint"]
     result = files.read_file("a.py")
     assert result.startswith("lines 1-200/250\n")
     assert result.endswith("next_offset=201")
     files.read_file("a.py", 230)
     files.read_file("a.py", 1, 200)
-    assert files.write_file("a.py", "bad")["error"] == "read_required"
+    assert not files._reads["a.py"].complete
     files.read_file("a.py", 201, 29)
-    assert files.write_file("a.py", "ok") == "written"
-    assert path.read_bytes() == b"ok"
+    assert files._reads["a.py"].complete
+    assert files.write_file("a.py", "ok")["error"] == "already_exists"
 
 
 def test_page_coverage_is_reset_when_file_changes(files, tmp_path):
@@ -88,17 +91,18 @@ def test_page_coverage_is_reset_when_file_changes(files, tmp_path):
     files.read_file("a", 1, 1)
     path.write_bytes(b"c\nb\n")
     files.read_file("a", 2, 1)
-    assert files.write_file("a", "bad")["error"] == "read_required"
+    assert not files._reads["a"].complete
     files.read_file("a", 1, 1)
-    assert files.write_file("a", "ok") == "written"
+    assert files._reads["a"].complete
 
 
 def test_empty_file_counts_as_a_complete_read(files, tmp_path):
-    """空文件存在时仍需读取，空内容本身构成完整读取。"""
+    """空文件已存在时 write_file 报错，读取空内容后构成完整读取。"""
     (tmp_path / "a").touch()
-    assert files.write_file("a", "x")["error"] == "read_required"
+    assert files.write_file("a", "x")["error"] == "already_exists"
     assert files.read_file("a") == "empty file"
-    assert files.write_file("a", "x") == "written"
+    assert files._reads["a"].complete
+    assert files.write_file("a", "x")["error"] == "already_exists"
 
 
 def test_rendered_byte_budget_covers_multibyte_text_and_resumes_without_loss(files, tmp_path):
@@ -125,14 +129,32 @@ def test_rendered_byte_budget_covers_multibyte_text_and_resumes_without_loss(fil
     assert pages > 1
     assert "".join(recovered) == text
     assert not (tmp_path / "tool_results").exists()
-    assert files.write_file("a", "ok") == "written"
+    assert files._reads["a"].complete
+    assert files.write_file("a", "ok")["error"] == "already_exists"
 
 
 def test_long_line_is_not_truncated_or_counted_as_read(files, tmp_path):
-    """超长行返回错误，不向覆盖保护提供虚假的已读记录。"""
-    (tmp_path / "a").write_text("中" * MAX_READ_BYTES, encoding="utf-8")
-    assert files.read_file("a")["error"] == "line_too_long"
-    assert files.write_file("a", "bad")["error"] == "read_required"
+    """超长行返回带字节数与上限说明的错误，不记录为已读。"""
+    long_line = "中" * MAX_READ_BYTES
+    (tmp_path / "a").write_text(long_line, encoding="utf-8")
+    error = files.read_file("a")
+    assert error["error"] == "line_too_long"
+    assert error["line"] == 1
+    assert error["total_lines"] == 1
+    assert error["line_bytes"] == len(long_line.encode("utf-8"))
+    assert 0 < error["max_bytes"] < error["line_bytes"]
+    assert str(error["line_bytes"]) in error["hint"]
+    assert str(error["max_bytes"]) in error["hint"]
+    assert "offset=2" not in error["hint"]
+    assert "a" not in files._reads
+    assert files.edit_file("a", "中", "x")["error"] == "read_required"
+    assert files.write_file("a", "bad")["error"] == "already_exists"
+
+    (tmp_path / "b").write_text(f"{long_line}\nnext\n", encoding="utf-8")
+    multi_error = files.read_file("b")
+    assert multi_error["error"] == "line_too_long"
+    assert multi_error["total_lines"] == 2
+    assert "offset=2" in multi_error["hint"]
 
 
 @pytest.mark.parametrize("original", [b"\xff\xfe\x00x", b"a\x00b", b"\xff"])
@@ -140,7 +162,7 @@ def test_binary_and_invalid_utf8_remain_untouched(files, tmp_path, original):
     path = tmp_path / "a"
     path.write_bytes(original)
     assert files.read_file("a")["error"] == "invalid_text"
-    assert files.write_file("a", "bad")["error"] == "read_required"
+    assert files.write_file("a", "bad")["error"] == "already_exists"
     assert path.read_bytes() == original
 
 
@@ -167,7 +189,7 @@ def test_match_errors_replacement_counts_and_bounded_diagnostics(files, tmp_path
     assert path.read_text(encoding="utf-8") == original
     assert files.edit_file("a", "x = 1", "x = 2", True) == "edited 20 matches"
     assert path.read_text(encoding="utf-8") == "x = 2\n" * 20
-    assert files.write_file("a", "bad")["error"] == "read_required"
+    assert not files._reads["a"].complete
 
 
 def test_overlapping_matches_are_not_treated_as_unique(files):
@@ -179,18 +201,18 @@ def test_overlapping_matches_are_not_treated_as_unique(files):
     assert files.edit_file("a", "aa", "b", True) == "edited 2 matches"
 
 
-def test_external_changes_block_overwrite_but_allow_unambiguous_edit(files, tmp_path):
-    """外部变更阻止整文件覆盖，仍唯一匹配的局部修改保留外部内容。"""
+def test_external_changes_revoke_complete_read_but_allow_unambiguous_edit(files, tmp_path):
+    """外部变更后唯一匹配的局部修改保留外部内容，并撤销完整读取状态。"""
     path = tmp_path / "a"
     path.write_bytes(b"a = 1\nb = 2\n")
     files.read_file("a")
     path.write_bytes(b"a = 1\nb = 3\n")
-    assert files.write_file("a", "bad")["error"] == "file_changed"
+    assert files.write_file("a", "bad")["error"] == "already_exists"
     assert files.edit_file("a", "a = 1", "a = 4") == "edited; changed_since_read=true"
     assert path.read_bytes() == b"a = 4\nb = 3\n"
-    assert files.write_file("a", "bad")["error"] == "read_required"
+    assert not files._reads["a"].complete
     files.read_file("a")
-    assert files.write_file("a", "ok") == "written"
+    assert files._reads["a"].complete
 
 
 def test_crlf_bom_indentation_and_executable_mode_survive_edit(files, tmp_path):
@@ -202,8 +224,6 @@ def test_crlf_bom_indentation_and_executable_mode_survive_edit(files, tmp_path):
     assert files.edit_file("a", "def f():\n\treturn 1", "def f():\n\treturn 2") == "edited"
     assert path.read_bytes() == b"\xef\xbb\xbfdef f():\r\n\treturn 2\r\n"
     assert path.stat().st_mode & 0o777 == 0o750
-    assert files.write_file("a", "new\n") == "written"
-    assert path.read_bytes() == b"\xef\xbb\xbfnew\n"
 
 
 @pytest.mark.parametrize("ending", [b"\n", b"\r"])
@@ -224,7 +244,7 @@ def test_relative_and_absolute_aliases_share_read_state(files, tmp_path):
     path = tmp_path / "a"
     path.write_bytes(b"a")
     files.read_file(str(path))
-    assert files.write_file("./a", "b") == "written"
+    assert files.edit_file("./a", "a", "b") == "edited"
     assert files.edit_file(str(path), "b", "c") == "edited"
 
 
@@ -267,7 +287,7 @@ def test_directory_fifo_and_read_only_files_fail_without_mutation(files, tmp_pat
     path.write_bytes(b"original")
     path.chmod(0o444)
     files.read_file("readonly")
-    assert files.write_file("readonly", "bad")["error"] == "permission_denied"
+    assert files.write_file("readonly", "bad")["error"] == "already_exists"
     assert files.edit_file("readonly", "original", "bad")["error"] == "permission_denied"
     assert path.read_bytes() == b"original"
 
@@ -411,10 +431,15 @@ def test_sessions_have_independent_read_state_and_revoke_borrowed_tools(tmp_path
         async with first, second:
             tools = first.resource(FileTools)
             await first.call("read_file", {"path": "a"})
-            assert (await second.call("write_file", {"path": "a", "content": "bad"}))[
-                "error"
-            ] == "read_required"
-            assert await first.call("write_file", {"path": "a", "content": "y"}) == "written"
+            assert (
+                await second.call(
+                    "edit_file", {"path": "a", "old_string": "x", "new_string": "bad"}
+                )
+            )["error"] == "read_required"
+            assert (
+                await first.call("edit_file", {"path": "a", "old_string": "x", "new_string": "y"})
+                == "edited"
+            )
         with pytest.raises(RuntimeError, match="closed"):
             tools.read_file("a")
         with pytest.raises(RuntimeError, match="not active"):
@@ -436,6 +461,7 @@ def test_agent_recovers_from_argument_and_match_errors_across_turns(monkeypatch,
             ("edit_file", {"path": "a.py", "old_string": "value = 1", "new_string": "value = 2"}),
             ("finish", {"content": "done"}),
             ("write_file", {"path": "a.py", "content": "value = 3\n"}),
+            ("write_file", {"path": "b.py", "content": "value = 3\n"}),
             ("finish", {"content": "continued"}),
         ]
     )
@@ -464,11 +490,13 @@ def test_agent_recovers_from_argument_and_match_errors_across_turns(monkeypatch,
             assert json.loads(history[0])["error"] == "invalid_argument"
             assert json.loads(history[2])["error"] == "no_match"
             assert history[3] == "edited"
-            assert history[5] == "written"
+            assert json.loads(history[5])["error"] == "already_exists"
+            assert history[6] == "created"
             assert "diff" not in history[3]
 
     asyncio.run(scenario())
-    assert path.read_bytes() == b"value = 3\n"
+    assert path.read_bytes() == b"value = 2\n"
+    assert (tmp_path / "b.py").read_bytes() == b"value = 3\n"
     assert {s["function"]["name"] for s in requests[0][1]} == {
         "apply_patch",
         "read_file",

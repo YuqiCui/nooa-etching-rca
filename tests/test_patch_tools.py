@@ -84,7 +84,8 @@ def test_add_update_move_delete_in_one_patch(files, tmp_path):
     assert (tmp_path / "moved/a.py").read_bytes() == b"FIRST\nLAST\n"
     assert not (tmp_path / "nested/a.py").exists()
     assert not (tmp_path / "obsolete").exists()
-    assert files.write_file("moved/a.py", "known") == "written"
+    assert files.write_file("moved/a.py", "known")["error"] == "already_exists"
+    assert files.edit_file("moved/a.py", "FIRST", "KNOWN") == "edited"
     assert "nested/a.py" not in files._reads
     assert "obsolete" not in files._reads
 
@@ -108,12 +109,12 @@ def test_read_state_is_not_created_by_preflight(files, tmp_path):
     assert (tmp_path / "existing").read_text() == "old\n"
 
 
-def test_partial_read_allows_update_but_not_delete_or_full_overwrite(files, tmp_path):
+def test_partial_read_allows_update_but_not_delete(files, tmp_path):
     """局部补丁保留未读状态；删除前必须完整读齐。"""
     (tmp_path / "a").write_text("old\ntail\n")
     files.read_file("a", 1, 1)
     assert files.apply_patch(patch("*** Update File: a", "-old", "+new"))["status"] == "applied"
-    assert files.write_file("a", "bad")["error"] == "read_required"
+    assert files.write_file("a", "bad")["error"] == "already_exists"
     assert files.apply_patch(patch("*** Delete File: a"))["error"] == "read_required"
     files.read_file("a")
     assert files.apply_patch(patch("*** Delete File: a"))["status"] == "applied"

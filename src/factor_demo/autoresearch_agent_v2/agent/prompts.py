@@ -42,7 +42,7 @@ All Workers share the current workspace and operational context. Always work wit
 
 Use the read tool — not shell commands like cat, sed, head, or tail — to inspect text files. Use offset and limit to read a line range or continue a large file.
 
-Read an existing file before overwriting it with write and prefer edit for targeted changes.
+Use write only to create new files; to modify an existing file, read it first and use apply_patch or edit.
 
 Read a file before editing it unless you just created or edited it in this session.
 
@@ -102,6 +102,8 @@ def session_system_prompt(
     if not worker_tools <= tool_names:
         prompt = prompt.replace(WORKER_LIFECYCLE_PROMPT, "")
     prompt = prompt.replace("Use the read tool", "Use read_file")
-    prompt = prompt.replace("with write and prefer edit", "with write_file and prefer edit_file")
+    prompt = prompt.replace("Use write only", "Use write_file only").replace(
+        "apply_patch or edit", "apply_patch or edit_file"
+    )
     role = WORKER_PROMPT if state.parent_agent_id is not None else ROUTER_PROMPT
     return f"{prompt.strip()}\n\n{role}"
