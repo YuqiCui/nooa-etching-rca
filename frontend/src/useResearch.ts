@@ -15,6 +15,8 @@ import type {
   Msg,
   ModelCall,
   Tool,
+  TrajectoryStep,
+  TrajectoryTool,
   Artifact,
   Branch,
   FormulaStudy,
@@ -39,6 +41,10 @@ export function useResearch() {
     connected: false,
     error: "",
     tab: "live",
+    mainView: "chat" as "chat" | "trajectory",
+    trajectory: {} as Record<string, TrajectoryStep[]>,
+    runtimeWorkers: [] as Branch[],
+    systemPrompts: {} as Record<string, string>,
     panel: window.innerWidth >= 1100,
     newDialog: false,
     newTitle: "设备与工艺数据研究",
@@ -157,6 +163,147 @@ export function useResearch() {
     }
     return c;
   }
+  /** 获取或初始化指定 Agent 的轨迹步骤列表。 */
+  function agentSteps(agentId = "main"): TrajectoryStep[] {
+    return (s.trajectory[agentId] ??= []);
+  }
+  /** 判断轨迹节点是否为 Agent 执行步骤（排除用户消息与任务分配卡片）。 */
+  function isAgentStep(step: TrajectoryStep): boolean {
+    return !step.kind || step.kind === "agent";
+  }
+  /** 根据模型调用 ID 获取或新建对应的轨迹步骤。 */
+  function stepForCall(callId: string, agentId = "main", time = 0): TrajectoryStep {
+    const steps = agentSteps(agentId);
+    let step = steps.find((item) => isAgentStep(item) && item.call_id === callId);
+    if (!step) {
+      const agentIndex = steps.filter(isAgentStep).length + 1;
+      step = {
+        id: `${agentId}:step:${agentIndex}:${steps.length + 1}`,
+        kind: "agent",
+        index: agentIndex,
+        agent_id: agentId,
+        call_id: callId,
+        thinking: "",
+        content: "",
+        modelEnded: false,
+        tools: [],
+        spawnedBranches: [],
+        time,
+      };
+      steps.push(step);
+    }
+    return step;
+  }
+  /** 获取指定 Agent 当前正在进行的轨迹步骤，不存在或最新节点非步骤时自动补建。 */
+  function currentStep(agentId = "main", time = 0): TrajectoryStep {
+    const steps = agentSteps(agentId);
+    const last = steps.at(-1);
+    if (last && isAgentStep(last)) return last;
+    const agentIndex = steps.filter(isAgentStep).length + 1;
+    const step: TrajectoryStep = {
+      id: `${agentId}:step:${agentIndex}:${steps.length + 1}`,
+      kind: "agent",
+      index: agentIndex,
+      agent_id: agentId,
+      thinking: "",
+      content: "",
+      modelEnded: true,
+      tools: [],
+      spawnedBranches: [],
+      time,
+    };
+    steps.push(step);
+    return step;
+  }
+  /** 为子 Agent 写入分配任务卡片；首次写入置于轨迹首位，后续重分配追加在当前位置。 */
+  function recordWorkerTask(
+    workerId: string,
+    taskText: string,
+    deliverList?: string[],
+    time = 0,
+  ) {
+    const body = taskText.trim();
+    if (!workerId || workerId === "main" || !body) return;
+    const deliverBlock =
+      Array.isArray(deliverList) && deliverList.length
+        ? `\n\n**交付清单**\n${deliverList.map((item) => `- ${item}`).join("\n")}`
+        : "";
+    const fullText = body + deliverBlock;
+    const steps = agentSteps(workerId);
+    if (
+      steps.some(
+        (item) =>
+          item.kind === "task" &&
+          (item.userMessage?.trim() === fullText.trim() ||
+            item.userMessage?.trim() === body),
+      )
+    ) {
+      return;
+    }
+    const card: TrajectoryStep = {
+      id: `${workerId}:task:${steps.length + 1}`,
+      kind: "task",
+      index: 0,
+      agent_id: workerId,
+      userMessage: fullText,
+      thinking: "",
+      content: "",
+      modelEnded: true,
+      tools: [],
+      spawnedBranches: [],
+      time,
+    };
+    const hasTask = steps.some((item) => item.kind === "task");
+    if (!hasTask) steps.unshift(card);
+    else steps.push(card);
+  }
+  /** 在指定 Agent 的轨迹步骤中按工具调用 ID 逆序查找工具记录。 */
+  function findTrajTool(agentId: string, toolId: string): TrajectoryTool | undefined {
+    const steps = agentSteps(agentId);
+    for (let i = steps.length - 1; i >= 0; i--) {
+      const found = steps[i].tools.find((item) => item.id === toolId);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  /** 将指定子 Agent 绑定到父 Agent 的派生锚点步骤（仅首次绑定）。 */
+  function attachSpawnAnchor(parentId: string, childId: string, step?: TrajectoryStep) {
+    const parentSteps = agentSteps(parentId);
+    if (parentSteps.some((item) => item.spawnedBranches.includes(childId))) return;
+    const anchor =
+      step || [...parentSteps].reverse().find((item) => item.kind !== "user");
+    if (anchor) anchor.spawnedBranches.push(childId);
+  }
+  /** 为新版 Router+Worker 运行时自动登记子 Worker，以便在执行轨迹中折叠与分屏展示。 */
+  function ensureRuntimeWorker(
+    workerId: string,
+    parentId = "main",
+    patch: Partial<Branch> = {},
+    anchorStep?: TrajectoryStep,
+  ) {
+    if (!workerId || workerId === "main") return;
+    if (s.branches.some((b) => b.id === workerId)) return;
+    let worker = s.runtimeWorkers.find((w) => w.id === workerId);
+    if (!worker) {
+      worker = {
+        id: workerId,
+        parent_id: parentId,
+        mission: "",
+        title: `Worker[general] · ${workerId.slice(-4)}`,
+        task: "",
+        state: "running",
+        worker_type: "general",
+        ...patch,
+      };
+      s.runtimeWorkers.push(worker);
+    } else {
+      if (patch.worker_type) worker.worker_type = patch.worker_type;
+      if (patch.title) worker.title = patch.title;
+      if (patch.task) worker.task = patch.task;
+      if (patch.state) worker.state = patch.state;
+    }
+    attachSpawnAnchor(parentId, workerId, anchorStep);
+  }
   function handle(events: Evt[]) {
     s.eventCount += events.length;
     const boundary = replayUntil;
@@ -166,6 +313,9 @@ export function useResearch() {
         agentId = e.agent_id || "main",
         prefix = e.task_id + ":" + (agentId === "main" ? "" : agentId + ":"),
         replay = e.id <= boundary;
+      if (agentId !== "main") {
+        ensureRuntimeWorker(agentId, e.parent_agent_id || "main");
+      }
       const phase = (v: string) => {
         if (!replay) {
           s.agentPhases[agentId] = v;
@@ -188,6 +338,29 @@ export function useResearch() {
             markdown: d.message,
             time: e.time,
           });
+          agentSteps(agentId).push({
+            id: `${agentId}:user:${e.id}`,
+            kind: "user",
+            index: 0,
+            agent_id: agentId,
+            userMessage: d.message,
+            thinking: "",
+            content: "",
+            modelEnded: true,
+            tools: [],
+            spawnedBranches: [],
+            time: e.time,
+          });
+          break;
+        case "agent.system_prompt":
+          if (typeof d.content === "string" && d.content.trim()) {
+            s.systemPrompts[agentId] = d.content;
+          }
+          break;
+        case "agent.task":
+          if (typeof d.task === "string" && d.task.trim()) {
+            recordWorkerTask(agentId, d.task, undefined, e.time);
+          }
           break;
         case "task.start":
           if (!replay) {
@@ -209,6 +382,22 @@ export function useResearch() {
               t.output += "\n本轮已结束，此调用没有成功完成记录。";
             }
           for (const c of s.calls) c.ended = true;
+          for (const steps of Object.values(s.trajectory)) {
+            for (const step of steps) {
+              step.modelEnded = true;
+              for (const t of step.tools) {
+                if (t.state === "running") {
+                  t.state = "error";
+                  t.output += "\n本轮已结束，此调用没有成功完成记录。";
+                }
+              }
+            }
+          }
+          for (const w of s.runtimeWorkers) {
+            if (["queued", "starting", "running"].includes(w.state)) {
+              w.state = d.status === "checkpoint" ? "completed" : d.status || "interrupted";
+            }
+          }
           for (const m of s.messages)
             if (m.provisional && m.id.startsWith(prefix)) {
               m.provisional = false;
@@ -242,6 +431,17 @@ export function useResearch() {
           const at = s.branches.findIndex((x) => x.id === row.id);
           if (at < 0) s.branches.push(row);
           else s.branches[at] = row;
+          if (e.type === "branch.created") {
+            const parentId = row.parent_id || e.parent_agent_id || "main";
+            const parentSteps = agentSteps(parentId);
+            const anchor = [...parentSteps].reverse().find(isAgentStep);
+            if (anchor && !anchor.spawnedBranches.includes(row.id)) {
+              anchor.spawnedBranches.push(row.id);
+            }
+            if (row.task) {
+              recordWorkerTask(row.id, row.task, undefined, e.time);
+            }
+          }
           if (!replay) void loadArtifacts();
           break;
         }
@@ -252,6 +452,19 @@ export function useResearch() {
             role: "assistant",
             agent_id: agentId,
             markdown: "主研究指导：" + d.message,
+          });
+          agentSteps(agentId).push({
+            id: `${agentId}:guidance:${e.id}`,
+            kind: "user",
+            index: 0,
+            agent_id: agentId,
+            userMessage: "主研究指导：" + d.message,
+            thinking: "",
+            content: "",
+            modelEnded: true,
+            tools: [],
+            spawnedBranches: [],
+            time: e.time,
           });
           break;
         case "review.start":
@@ -321,6 +534,9 @@ export function useResearch() {
               markdown: "",
               provisional: true,
             });
+          const step = currentStep(agentId, e.time);
+          step.report = "";
+          step.reportProvisional = true;
           phase("正在回复");
           break;
         }
@@ -341,6 +557,12 @@ export function useResearch() {
           ) {
             m.markdown = d.offset === 0 ? d.text : m.markdown + d.text;
             m.provisional = true;
+          }
+          const step = currentStep(agentId, e.time);
+          const cur = step.report || "";
+          if (d.offset === 0 || Array.from(cur).length === d.offset) {
+            step.report = d.offset === 0 ? d.text : cur + d.text;
+            step.reportProvisional = true;
           }
           phase("正在回复");
           break;
@@ -363,79 +585,178 @@ export function useResearch() {
               markdown: d.markdown,
               provisional: false,
             });
+          const step = currentStep(agentId, e.time);
+          step.report = d.markdown;
+          step.reportProvisional = false;
           if (!replay) void loadArtifacts();
           break;
         }
         case "model.start":
           call(d.call_id, agentId);
+          stepForCall(d.call_id, agentId, e.time);
           break;
         case "model.reasoning.delta":
           call(d.call_id, agentId).thinking += d.text;
+          stepForCall(d.call_id, agentId, e.time).thinking += d.text;
           break;
         case "model.content.delta":
           call(d.call_id, agentId).content += d.text;
+          stepForCall(d.call_id, agentId, e.time).content += d.text;
           break;
         // Historical tool.arguments.delta events are intentionally ignored too.
         case "model.stream.end":
           call(d.call_id, agentId).ended = true;
+          stepForCall(d.call_id, agentId, e.time).modelEnded = true;
           break;
-        case "tool.start":
+        case "tool.start": {
           phase("执行研究代码");
-          s.tools.push({
-            id: prefix + "worker-" + d.cell,
+          const toolId = prefix + "worker-" + d.cell;
+          const toolItem: TrajectoryTool = {
+            id: toolId,
             name: "研究代码 · " + d.cell,
-            agent_id: agentId,
             code: d.code,
             output: "",
             state: "running",
-          });
+          };
+          s.tools.push({ ...toolItem, agent_id: agentId });
+          currentStep(agentId, e.time).tools.push(toolItem);
           break;
+        }
         case "tool.output": {
-          const t = s.tools.find((t) => t.id === prefix + "worker-" + d.cell);
+          const toolId = prefix + "worker-" + d.cell;
+          const t = s.tools.find((t) => t.id === toolId);
           if (t) t.output += d.text;
+          const tt = findTrajTool(agentId, toolId);
+          if (tt) tt.output += d.text;
           break;
         }
         case "tool.end": {
-          const t = s.tools.find((t) => t.id === prefix + "worker-" + d.cell);
+          const toolId = prefix + "worker-" + d.cell;
+          const t = s.tools.find((t) => t.id === toolId);
           if (t) {
             t.state = d.ok ? "ok" : "error";
             t.elapsed = d.elapsed_s;
             t.output = t.output || d.output;
           }
+          const tt = findTrajTool(agentId, toolId);
+          if (tt) {
+            tt.state = d.ok ? "ok" : "error";
+            tt.elapsed = d.elapsed_s;
+            tt.output = tt.output || d.output;
+          }
           break;
         }
-        case "agent.tool.start":
-          s.tools.push({
-            id: prefix + d.tool_call_id,
+        case "agent.tool.start": {
+          const toolId = prefix + d.tool_call_id;
+          const toolItem: TrajectoryTool = {
+            id: toolId,
             name: d.name,
-            agent_id: agentId,
             code: d.arguments ? JSON.stringify(d.arguments, null, 2) : "",
             output: "",
             state: "running",
-          });
+          };
+          s.tools.push({ ...toolItem, agent_id: agentId });
+          currentStep(agentId, e.time).tools.push(toolItem);
           break;
+        }
         case "agent.tool.end": {
-          const t = s.tools.find((t) => t.id === prefix + d.tool_call_id);
+          const toolId = prefix + d.tool_call_id;
+          const t = s.tools.find((t) => t.id === toolId);
           if (t) {
             t.state = d.ok ? "ok" : "error";
             t.elapsed = d.elapsed_s;
             if (d.output) t.output = d.output;
           }
+          const tt = findTrajTool(agentId, toolId);
+          if (tt) {
+            tt.state = d.ok ? "ok" : "error";
+            tt.elapsed = d.elapsed_s;
+            if (d.output) tt.output = d.output;
+          }
+          if (
+            d.ok &&
+            (d.name === "StartWorker" ||
+              d.name === "AssignTask" ||
+              d.name === "CollectWorkerResult") &&
+            typeof d.output === "string"
+          ) {
+            try {
+              const parsed = JSON.parse(d.output);
+              const wid = parsed?.worker_id || parsed?.agent_id;
+              if (typeof wid === "string" && wid) {
+                const ownerStep = agentSteps(agentId).find((st) =>
+                  st.tools.some((item) => item.id === toolId),
+                );
+                if (d.name === "CollectWorkerResult") {
+                  ensureRuntimeWorker(wid, agentId, { state: "completed" }, ownerStep);
+                } else {
+                  let taskHint = "";
+                  let deliverList: string[] | undefined;
+                  let workerType =
+                    typeof parsed?.worker_type === "string"
+                      ? parsed.worker_type
+                      : "";
+                  if (tt?.code) {
+                    try {
+                      const args = JSON.parse(tt.code);
+                      if (!workerType && typeof args?.worker_type === "string") {
+                        workerType = args.worker_type;
+                      }
+                      if (d.name === "AssignTask") {
+                        if (typeof args?.task === "string") taskHint = args.task.trim();
+                        if (Array.isArray(args?.deliver_list)) {
+                          deliverList = args.deliver_list.map(String);
+                        }
+                      }
+                    } catch {}
+                  }
+                  const existing = s.runtimeWorkers.find((w) => w.id === wid);
+                  const resolvedType = workerType || existing?.worker_type || "general";
+                  const prefixTag = `Worker[${resolvedType}]`;
+                  const shortTitle = taskHint
+                    ? `${prefixTag} · ${taskHint.slice(0, 18)}${taskHint.length > 18 ? "…" : ""}`
+                    : !existing?.task
+                      ? `${prefixTag} · ${wid.slice(-4)}`
+                      : undefined;
+                  ensureRuntimeWorker(
+                    wid,
+                    agentId,
+                    {
+                      state: d.name === "AssignTask" ? "running" : "queued",
+                      worker_type: resolvedType,
+                      ...(shortTitle ? { title: shortTitle } : {}),
+                      ...(taskHint ? { task: taskHint } : {}),
+                    },
+                    ownerStep,
+                  );
+                  if (d.name === "AssignTask" && taskHint) {
+                    recordWorkerTask(wid, taskHint, deliverList, e.time);
+                  }
+                }
+              }
+            } catch {}
+          }
           break;
         }
-        case "tool.cell.start":
-          s.tools.push({
-            id: prefix + d.tool_call_id,
+        case "tool.cell.start": {
+          const toolId = prefix + d.tool_call_id;
+          const toolItem: TrajectoryTool = {
+            id: toolId,
             name: "模型工具单元",
-            agent_id: agentId,
             code: d.code,
             output: "",
             state: "running",
-          });
+          };
+          s.tools.push({ ...toolItem, agent_id: agentId });
+          currentStep(agentId, e.time).tools.push(toolItem);
           break;
+        }
         case "tool.cell.finished": {
-          const t = s.tools.find((t) => t.id === prefix + d.tool_call_id);
+          const toolId = prefix + d.tool_call_id;
+          const t = s.tools.find((t) => t.id === toolId);
           if (t) t.state = d.ok === false ? "error" : "ok";
+          const tt = findTrajTool(agentId, toolId);
+          if (tt) tt.state = d.ok === false ? "error" : "ok";
           break;
         }
         case "tool.cell.end":
@@ -479,6 +800,9 @@ export function useResearch() {
       s.eventCount = 0;
       s.calls = [];
       s.tools = [];
+      s.trajectory = {};
+      s.runtimeWorkers = [];
+      s.systemPrompts = {};
       s.messages = [];
       s.meta = null;
       s.artifacts = [];
@@ -507,6 +831,16 @@ export function useResearch() {
         s.meta = x;
         s.branches = x.branches || [];
         s.formulaStudies = x.formula_studies || [];
+        if (x.system_prompts && typeof x.system_prompts === "object") {
+          s.systemPrompts = { ...x.system_prompts };
+        }
+        if (x.worker_tasks && typeof x.worker_tasks === "object") {
+          for (const [wid, taskText] of Object.entries(x.worker_tasks)) {
+            if (typeof taskText === "string" && taskText.trim()) {
+              recordWorkerTask(wid, taskText);
+            }
+          }
+        }
         s.activeAgent = x.active_agent_id || "main";
         s.artifacts = x.artifacts;
         s.messages = x.history.map((m: Msg) => ({ ...m, legacy: true }));

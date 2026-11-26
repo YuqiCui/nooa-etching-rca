@@ -1677,3 +1677,1240 @@ h1 {
 .evaluation-panel table { width: 100%; border-collapse: collapse; margin: 12px 0; }
 .evaluation-panel th, .evaluation-panel td { text-align: left; border-bottom: 1px solid var(--line); padding: 9px 4px; font-size: 11px; }
 .evaluation-panel td { text-align: right; font-family: monospace; }
+
+/* 主区域双 Tab 切换 */
+.main-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  border-radius: 9px;
+  background: #eaece3;
+  border: 1px solid #dce1d6;
+}
+.main-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 13px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 550;
+  color: #617168;
+  background: transparent;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.main-tabs button:hover {
+  color: var(--ink);
+}
+.main-tabs button.on {
+  background: #fdfdf9;
+  color: var(--teal);
+  box-shadow: 0 1px 3px #18362a14;
+}
+.main-tabs .tab-count {
+  font-size: 10px;
+  font-weight: 650;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #e1eae4;
+  color: var(--teal);
+}
+
+/* 执行轨迹主视图 */
+.traj-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: var(--paper);
+}
+.traj-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  padding: 11px 28px;
+  border-bottom: 1px solid var(--line);
+  background: #f2f3ec;
+}
+.traj-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.traj-main-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #fdfdf9;
+  border: 1px solid #dce1d6;
+  font-size: 12px;
+}
+.traj-main-pill.live {
+  border-color: #9ec0ae;
+  background: #eef6f1;
+}
+.traj-main-pill small {
+  color: var(--muted);
+  font-size: 11px;
+}
+.traj-phase {
+  font-size: 12px;
+  color: #5b6d64;
+}
+.traj-worker-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.strip-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  margin-right: 2px;
+}
+.worker-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid #d7ddd1;
+  background: #fafaf6;
+  font-size: 11.5px;
+  color: var(--ink);
+  max-width: 220px;
+}
+.worker-chip:hover {
+  border-color: #8cb29e;
+  background: #f2f7f4;
+}
+.worker-chip.selected {
+  background: var(--teal);
+  border-color: var(--teal);
+  color: #fff;
+}
+.worker-chip.selected small {
+  color: #cde2d7;
+}
+.worker-chip-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.worker-chip small {
+  font-size: 10.5px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.worker-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.worker-dot.running {
+  background: #2f8f63;
+  box-shadow: 0 0 0 3px #2f8f6326;
+}
+.worker-dot.ok {
+  background: #5b9378;
+}
+.worker-dot.error {
+  background: #c74a4a;
+}
+.traj-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+.traj-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 7px;
+  font-size: 11.5px;
+  color: #5e6d65;
+  background: #fafaf6;
+  border: 1px solid #dce1d6;
+}
+.traj-filter-btn.on {
+  background: #e3efe8;
+  border-color: #9ec0ae;
+  color: var(--teal);
+  font-weight: 550;
+}
+
+.traj-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 20px 28px 36px;
+}
+.traj-empty {
+  max-width: 420px;
+  margin: 72px auto 0;
+  text-align: center;
+  color: var(--muted);
+}
+.traj-empty h3 {
+  margin: 12px 0 6px;
+  font-size: 16px;
+  color: var(--ink);
+}
+.traj-empty p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.traj-empty-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 14px;
+  border-radius: 10px;
+  border: 1px dashed #d3d9cc;
+  color: var(--muted);
+  font-size: 12px;
+  background: #fafaf6;
+}
+.traj-single {
+  max-width: 860px;
+  margin: 0 auto;
+}
+.traj-col-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  padding: 0 2px;
+  font-size: 12px;
+  color: #5d6e65;
+}
+.traj-col-head strong {
+  color: var(--ink);
+  font-weight: 650;
+}
+.traj-step-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 左右分屏（从派生点开始对齐展开） */
+.traj-split {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.traj-split-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+.traj-col {
+  min-width: 0;
+}
+.traj-col-sub {
+  padding-left: 18px;
+  border-left: 2px solid #b8d0c3;
+  position: relative;
+}
+.traj-sub-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  border-radius: 10px;
+  background: #ebf3ee;
+  border: 1px solid #c6dcd0;
+}
+.traj-sub-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: var(--teal);
+  font-size: 12.5px;
+}
+.traj-sub-title select {
+  background: #fdfdf9;
+  border: 1px solid #c6dcd0;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 12px;
+  color: var(--ink);
+  max-width: 240px;
+}
+.traj-sub-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.sub-status-text {
+  font-size: 11px;
+  color: #4b695c;
+}
+.sub-stop-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: #fbeaea;
+  color: #b43c3c;
+  font-size: 11px;
+  font-weight: 550;
+}
+.sub-close-btn {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: transparent;
+  color: #4f675b;
+}
+.sub-close-btn:hover {
+  background: #dcebe3;
+}
+
+/* 单步卡片 */
+.traj-step {
+  background: #fdfdf9;
+  border: 1px solid #dfe4d9;
+  border-radius: 11px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  box-shadow: 0 1px 2px #1c342808;
+}
+.traj-step.running {
+  border-color: #9ec0ae;
+}
+.traj-step.error {
+  border-color: #e4b5b5;
+}
+.traj-step.spawn-anchor {
+  border-color: #5f997e;
+  box-shadow: 0 0 0 2px #5f997e20;
+}
+.traj-step-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.traj-step-id {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.step-num {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--teal);
+  background: #e9f1ec;
+  padding: 2px 7px;
+  border-radius: 6px;
+}
+.step-state-icon {
+  display: inline-flex;
+  align-items: center;
+}
+.step-state-icon.running {
+  color: #2f8f63;
+}
+.step-state-icon.ok {
+  color: #4f866c;
+}
+.step-state-icon.error {
+  color: #c74a4a;
+}
+.traj-step-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.spawn-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #e4f2eb;
+  color: var(--teal);
+}
+.step-time {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* 模型思考（默认折叠为 thinking...） */
+.traj-thinking {
+  border: 1px solid #e5e8df;
+  border-radius: 8px;
+  background: #f7f8f3;
+  overflow: hidden;
+}
+.thinking-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: transparent;
+  color: #62726a;
+  font-size: 12px;
+  text-align: left;
+}
+.thinking-toggle:hover {
+  background: #eff1e9;
+}
+.thinking-label {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-style: italic;
+}
+.thinking-live {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #2f8f63;
+}
+.thinking-len {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.thinking-body {
+  padding: 9px 11px;
+  border-top: 1px solid #e5e8df;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #42554d;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 工具调用 + 工具返回合并卡片 */
+.traj-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.traj-tool-card {
+  border: 1px solid #dde3d7;
+  border-radius: 9px;
+  background: #fafbf7;
+  overflow: hidden;
+}
+.traj-tool-card.running {
+  border-color: #a9cbb9;
+}
+.traj-tool-card.error {
+  border-color: #e4b5b5;
+}
+.traj-tool-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  background: #f1f4ec;
+  border-bottom: 1px solid #e2e7dc;
+}
+.traj-tool-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--ink);
+}
+.traj-tool-title strong {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tool-term-icon {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.traj-tool-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.tool-elapsed {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.tool-mode-switch {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 6px;
+  background: #e4e8dd;
+}
+.tool-mode-switch button {
+  padding: 2px 8px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 550;
+  color: #5b6b63;
+  background: transparent;
+}
+.tool-mode-switch button.on {
+  background: #fff;
+  color: var(--teal);
+  box-shadow: 0 1px 2px #00000010;
+}
+.tool-mode-switch button.has-error:not(.on) {
+  color: #b43c3c;
+}
+.traj-tool-body pre {
+  margin: 0;
+  padding: 9px 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+}
+.traj-code {
+  color: #253d36;
+  background: #fafbf7;
+}
+.traj-output {
+  color: #2f433c;
+  background: #f5f8f5;
+}
+
+/* Notebook write_cell / write_cells Python 代码渲染 */
+.panel-tool-tabs {
+  display: flex;
+  justify-content: flex-end;
+  padding: 6px 10px;
+  border-top: 1px solid #e3eadb;
+  background: #f1f4ec;
+}
+.py-cells-view {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 9px 10px;
+  background: #f8faf6;
+}
+.py-cells-view.compact {
+  padding: 8px;
+  gap: 6px;
+}
+.py-cells-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 11px;
+  color: #5b6d65;
+}
+.py-meta-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #e7f0ea;
+  color: var(--teal);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  font-weight: 550;
+}
+.py-meta-count,
+.py-meta-anchor {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  color: #6b7d75;
+}
+.py-cell-block {
+  border: 1px solid #d9e2d5;
+  border-radius: 7px;
+  background: #fff;
+  overflow: hidden;
+}
+.py-cell-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 9px;
+  background: #f2f5ee;
+  border-bottom: 1px solid #e2e8dc;
+  font-size: 11px;
+  color: #5a6d64;
+}
+.py-cell-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 600;
+  color: #3c544b;
+}
+.py-cell-id {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #e6ede4;
+  color: #52685f;
+  font-size: 10px;
+  font-weight: 500;
+}
+.py-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #5e7269;
+  font-size: 10.5px;
+  cursor: pointer;
+}
+.py-copy-btn:hover {
+  background: #e5ece3;
+  color: var(--teal);
+}
+.traj-tool-body pre.py-code,
+.py-cells-view pre.py-code {
+  margin: 0;
+  padding: 8px 0;
+  background: #fbfcf9;
+  color: #24352f;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.55;
+  white-space: pre;
+  word-break: normal;
+  overflow-x: auto;
+}
+.py-cells-view.compact pre.py-code {
+  font-size: 10px;
+  line-height: 1.5;
+  max-height: 240px;
+  overflow: auto;
+}
+.py-code code {
+  display: block;
+  min-width: max-content;
+}
+.py-line {
+  display: flex;
+  padding: 0 11px 0 0;
+}
+.py-line:hover {
+  background: #f1f6f1;
+}
+.py-ln {
+  flex: 0 0 auto;
+  min-width: 32px;
+  padding: 0 8px 0 8px;
+  margin-right: 8px;
+  text-align: right;
+  user-select: none;
+  color: #98a9a0;
+  border-right: 1px solid #e6ece3;
+}
+.py-line-text {
+  flex: 1 1 auto;
+}
+.py-tok-keyword {
+  color: #0f6b5f;
+  font-weight: 600;
+}
+.py-tok-constant {
+  color: #9c4a1a;
+  font-weight: 600;
+}
+.py-tok-builtin {
+  color: #1f5c8a;
+}
+.py-tok-def-name {
+  color: #194d7a;
+  font-weight: 600;
+}
+.py-tok-decorator {
+  color: #7c4d9b;
+}
+.py-tok-string {
+  color: #2c6e3f;
+}
+.py-tok-comment {
+  color: #7f9188;
+  font-style: italic;
+}
+.py-tok-number {
+  color: #b05619;
+}
+.py-tok-operator {
+  color: #5b6d66;
+}
+
+/* apply_patch / edit_file Git 风格差异渲染 */
+.code-diff-view {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 9px 10px;
+  background: #f8faf6;
+}
+.code-diff-view.compact {
+  padding: 8px;
+  gap: 6px;
+}
+.diff-summary-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: #5b6d65;
+}
+.diff-meta-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #e7f0ea;
+  color: var(--teal);
+  font-size: 10.5px;
+  font-weight: 550;
+}
+.diff-file-block {
+  border: 1px solid #d9e2d5;
+  border-radius: 7px;
+  background: #fff;
+  overflow: hidden;
+}
+.diff-file-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 9px;
+  background: #f2f5ee;
+  border-bottom: 1px solid #e2e8dc;
+  font-size: 11px;
+  color: #3c544b;
+}
+.diff-file-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 600;
+}
+.diff-file-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.diff-action-badge {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 600;
+}
+.diff-action-badge.add {
+  background: #dcf4e4;
+  color: #166534;
+}
+.diff-action-badge.delete {
+  background: #fce2e4;
+  color: #9f1c26;
+}
+.diff-action-badge.update {
+  background: #e3eee8;
+  color: #0f6b5f;
+}
+.diff-action-badge.move {
+  background: #e4eef7;
+  color: #1f5382;
+}
+.diff-flag-chip {
+  flex-shrink: 0;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #e8ede5;
+  color: #52685f;
+  font-size: 10px;
+  font-weight: 500;
+}
+.diff-file-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  font-weight: 600;
+}
+.diff-stat-add {
+  color: #1a7f37;
+}
+.diff-stat-del {
+  color: #cf222e;
+}
+.diff-empty-note {
+  padding: 8px 11px;
+  font-size: 11px;
+  color: #9f1c26;
+  background: #fef5f5;
+}
+.traj-tool-body pre.diff-code,
+.code-diff-view pre.diff-code {
+  margin: 0;
+  padding: 6px 0;
+  background: #fbfcf9;
+  color: #24352f;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.55;
+  white-space: pre;
+  word-break: normal;
+  overflow-x: auto;
+}
+.code-diff-view.compact pre.diff-code {
+  font-size: 10px;
+  line-height: 1.5;
+  max-height: 240px;
+  overflow: auto;
+}
+.diff-code code {
+  display: block;
+  min-width: max-content;
+}
+.diff-line {
+  display: flex;
+  padding: 0 11px 0 0;
+}
+.diff-line-add {
+  background: #e8f7ed;
+  color: #155724;
+}
+.diff-line-del {
+  background: #fdebec;
+  color: #842029;
+}
+.diff-line-ctx {
+  background: #fbfcf9;
+  color: #24352f;
+}
+.diff-line-hunk {
+  background: #eef4f1;
+  color: #4f6b62;
+  padding: 2px 11px;
+  font-size: 10.5px;
+  border-top: 1px solid #e2ebe6;
+  border-bottom: 1px solid #e2ebe6;
+}
+.diff-hunk-text {
+  user-select: none;
+}
+.diff-ln {
+  flex: 0 0 auto;
+  min-width: 28px;
+  padding: 0 6px;
+  text-align: right;
+  user-select: none;
+  color: #98a9a0;
+  border-right: 1px solid #e6ece3;
+}
+.diff-line-add .diff-ln {
+  background: #d8f1e0;
+  color: #2d7a47;
+  border-right-color: #c2e7ce;
+}
+.diff-line-del .diff-ln {
+  background: #fadadd;
+  color: #b53a44;
+  border-right-color: #f3c1c6;
+}
+.diff-sign {
+  flex: 0 0 20px;
+  text-align: center;
+  user-select: none;
+  font-weight: 700;
+  margin-right: 6px;
+}
+.diff-line-add .diff-sign {
+  background: #d3f0dc;
+  color: #1a7f37;
+}
+.diff-line-del .diff-sign {
+  background: #f9d4d7;
+  color: #cf222e;
+}
+.diff-line-ctx .diff-sign {
+  color: #98a9a0;
+}
+.diff-line-text {
+  flex: 1 1 auto;
+}
+
+/* 阶段汇报 */
+.traj-report {
+  border: 1px solid #dfe6df;
+  border-radius: 8px;
+  background: #f6faf7;
+  padding: 8px 11px;
+}
+.traj-report-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--teal);
+  margin-bottom: 5px;
+}
+.traj-report-body {
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink);
+  word-break: break-word;
+  overflow-x: auto;
+}
+
+/* 派生子 Agent 折叠入口卡片 */
+.traj-spawns {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.traj-spawn-card {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid #c9ddd1;
+  background: #eef6f1;
+  color: var(--teal);
+  font-size: 12px;
+  text-align: left;
+}
+.traj-spawn-card:hover {
+  background: #e3f0e8;
+}
+.traj-spawn-card.active {
+  background: var(--teal);
+  border-color: var(--teal);
+  color: #fff;
+}
+.traj-spawn-card.active .spawn-meta,
+.traj-spawn-card.active .spawn-action {
+  color: #d7ebe0;
+}
+.spawn-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.spawn-meta {
+  font-size: 11px;
+  color: #547264;
+  flex-shrink: 0;
+}
+.spawn-action {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+/* 精简后的对话顶部工具栏 */
+.direction-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  padding: 9px 28px;
+  border-bottom: 1px solid var(--line);
+  background: #f2f3ec;
+}
+.direction-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.direction-bar select {
+  background: #fdfdf9;
+  border: 1px solid #d7ddd1;
+  border-radius: 7px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--ink);
+  max-width: 280px;
+}
+.direction-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 11.5px;
+  color: #6b7a71;
+}
+.meta-stat b {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 650;
+  color: var(--ink);
+  margin-left: 3px;
+}
+.direction-meta .status-pill {
+  padding: 4px 9px;
+  font-size: 11px;
+}
+.connection-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: #7c8981;
+}
+
+.tool-raw-name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  font-weight: 650;
+  color: var(--teal);
+  flex-shrink: 0;
+}
+.tool-desc {
+  font-size: 11.5px;
+  color: #5b6d64;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 执行轨迹中的用户消息节点 */
+.traj-user-card {
+  background: #edf4ef;
+  border: 1px solid #c6dcd0;
+  border-radius: 10px;
+  padding: 10px 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.traj-user-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.traj-user-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--teal);
+}
+.traj-user-body {
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 轨迹卡片中的 Markdown 渲染容器（report / finish / 阶段汇报） */
+.traj-markdown-body {
+  padding: 10px 12px;
+  background: #fdfdf9;
+  font-size: 12.5px;
+  line-height: 1.65;
+  overflow-x: auto;
+}
+.traj-markdown-body .markdown > :first-child,
+.traj-report-body .markdown > :first-child {
+  margin-top: 0;
+}
+.traj-markdown-body .markdown > :last-child,
+.traj-report-body .markdown > :last-child {
+  margin-bottom: 0;
+}
+
+/* 左右分屏独立滚动容器 */
+.traj-split-panes {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  overflow: hidden;
+}
+.traj-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.traj-pane-main {
+  border-right: 1px solid var(--line);
+}
+.traj-pane-sub {
+  background: #f3f5ee;
+}
+.traj-pane-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 11px 22px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  color: #5d6e65;
+  background: var(--paper);
+  flex-shrink: 0;
+}
+.traj-pane-header strong {
+  color: var(--ink);
+  font-weight: 650;
+}
+.traj-pane-sub .traj-sub-head {
+  margin: 0;
+  border-radius: 0;
+  border: 0;
+  border-bottom: 1px solid #c6dcd0;
+  padding: 8px 20px;
+  flex-shrink: 0;
+}
+.traj-pane-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 22px 36px;
+}
+
+/* System Prompt 折叠卡片 */
+.traj-sys-prompt {
+  margin-bottom: 12px;
+  border: 1px solid #d9dfd3;
+  border-radius: 10px;
+  background: #f5f6f0;
+  overflow: hidden;
+}
+.traj-sys-prompt > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: #53645c;
+  user-select: none;
+}
+.traj-sys-prompt > summary::-webkit-details-marker {
+  display: none;
+}
+.traj-sys-prompt > summary:hover {
+  background: #ecefe6;
+}
+.traj-sys-prompt[open] .sys-chevron {
+  transform: rotate(90deg);
+}
+.sys-chevron {
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+}
+.traj-sys-prompt > summary strong {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  font-weight: 650;
+  color: var(--ink);
+}
+.traj-sys-prompt > summary span {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.traj-sys-body {
+  margin: 0;
+  padding: 10px 12px;
+  border-top: 1px solid #dde3d7;
+  background: #fafbf7;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: #3a4c45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+}
+
+/* Worker 分配任务首卡片 */
+.traj-task-card {
+  background: #f2f6f9;
+  border: 1px solid #c5d6e2;
+  border-radius: 10px;
+  padding: 10px 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.traj-task-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 650;
+  color: #295978;
+}
+.traj-task-body {
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink);
+  overflow-x: auto;
+}
+.traj-task-body .markdown > :first-child {
+  margin-top: 0;
+}
+.traj-task-body .markdown > :last-child {
+  margin-bottom: 0;
+}

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { reactive } from "vue";
 import {
   Activity,
   ArrowDown,
@@ -13,6 +14,7 @@ import {
   FileSpreadsheet,
   FlaskConical,
   FolderOpen,
+  GitBranch,
   LoaderCircle,
   MessageSquare,
   PanelRightClose,
@@ -27,6 +29,12 @@ import ResearchMessage from "./components/ResearchMessage.vue";
 import FormulaStudies from "./components/FormulaStudies.vue";
 import DatasetPanel from "./components/DatasetPanel.vue";
 import EvaluationPanel from "./components/EvaluationPanel.vue";
+import TrajectoryView from "./components/TrajectoryView.vue";
+import PythonCellsView from "./components/PythonCellsView.vue";
+import CodeDiffView from "./components/CodeDiffView.vue";
+import { extractPythonCells } from "./utils/pythonCells";
+import { extractCodeDiff } from "./utils/codeDiff";
+import type { Tool } from "./types";
 import { useResearch } from "./useResearch";
 import { asset } from "./api";
 const {
@@ -72,6 +80,7 @@ const names: Record<string, string> = {
   sandbox__run_shell: "执行文件操作",
   read_file: "读取研究记录",
   edit_file: "修改研究记录",
+  apply_patch: "应用补丁",
   finish: "提交研究结果",
   report_progress: "汇报阶段性进展",
   report: "汇报阶段性进展",
@@ -124,6 +133,36 @@ function statusLabel(value: string) {
 }
 function agentLabel(identity = "main") {
   return identity === "main" ? "Router" : `Worker · ${identity.slice(-4)}`;
+}
+let panelBeforeTrajectory: boolean | null = null;
+/** 记录右侧实时过程工具卡片的标签状态，支持代码 / 变更 / 原始调用切换。 */
+const panelToolTab = reactive<Record<string, "code" | "diff" | "call">>({});
+function panelToolPython(tool: Tool) {
+  return extractPythonCells(tool.name, tool.code, tool.output);
+}
+function panelToolDiff(tool: Tool) {
+  return extractCodeDiff(tool.name, tool.code);
+}
+function panelToolMode(tool: Tool): "code" | "diff" | "call" {
+  if (panelToolPython(tool)) {
+    return panelToolTab[tool.id] === "call" ? "call" : "code";
+  }
+  if (panelToolDiff(tool)) {
+    return panelToolTab[tool.id] === "call" ? "call" : "diff";
+  }
+  return "call";
+}
+/** 切换主区域视图；进入轨迹视图时自动收起右侧面板以留出分屏空间。 */
+function switchMainView(view: "chat" | "trajectory") {
+  if (s.mainView === view) return;
+  if (view === "trajectory") {
+    panelBeforeTrajectory = s.panel;
+    s.panel = false;
+  } else if (panelBeforeTrajectory !== null) {
+    s.panel = panelBeforeTrajectory;
+    panelBeforeTrajectory = null;
+  }
+  s.mainView = view;
 }
 </script>
 <template>
@@ -179,6 +218,40 @@ function agentLabel(identity = "main") {
             s.meta?.title || "选择一个研究会话"
           }}</strong>
         </div>
+        <div class="main-tabs" role="tablist" aria-label="主工作区视图">
+          <button
+            type="button"
+            role="tab"
+            :aria-selected="s.mainView === 'chat'"
+            :class="{ on: s.mainView === 'chat' }"
+            @click="switchMainView('chat')"
+          >
+            <MessageSquare :size="13" />研究对话
+          </button>
+          <button
+            type="button"
+            role="tab"
+            :aria-selected="s.mainView === 'trajectory'"
+            :class="{ on: s.mainView === 'trajectory' }"
+            @click="switchMainView('trajectory')"
+          >
+            <GitBranch :size="13" />执行轨迹
+            <span
+              v-if="
+                (s.trajectory.main || []).filter(
+                  (step) => !step.kind || step.kind === 'agent',
+                ).length
+              "
+              class="tab-count"
+            >
+              {{
+                (s.trajectory.main || []).filter(
+                  (step) => !step.kind || step.kind === "agent",
+                ).length
+              }}
+            </span>
+          </button>
+        </div>
         <button
           class="icon-button"
           aria-label="切换研究面板"
@@ -190,10 +263,11 @@ function agentLabel(identity = "main") {
           />
         </button>
       </header>
+      <template v-if="s.mainView === 'chat'">
       <div class="direction-bar">
-        <label
-          >当前研究方向
+        <div class="direction-left">
           <select
+            aria-label="当前研究方向"
             :value="s.selectedAgent"
             @change="selectAgent(($event.target as HTMLSelectElement).value)"
           >
@@ -205,50 +279,44 @@ function agentLabel(identity = "main") {
             >
               {{ branch.title }} · {{ statusLabel(branch.state) }}
             </option>
-          </select></label
-        ><span v-if="selectedBranch" class="branch-status"
-          >{{ statusLabel(selectedBranch.state)
-          }}<button
-            v-if="
-              ['queued', 'starting', 'running'].includes(selectedBranch.state)
-            "
-            @click="stopBranch(selectedBranch.id)"
+          </select>
+          <span v-if="selectedBranch" class="branch-status"
+            >{{ statusLabel(selectedBranch.state)
+            }}<button
+              v-if="
+                ['queued', 'starting', 'running'].includes(selectedBranch.state)
+              "
+              @click="stopBranch(selectedBranch.id)"
+            >
+              停止此分支
+            </button></span
           >
-            停止此分支
-          </button></span
-        >
-      </div>
-      <div class="workspace-heading">
-        <div>
-          <div class="eyebrow"><span />CHAMBER MATCHING</div>
-          <h1>让异常，成为可检验的线索。</h1>
-          <p>按问题划分数据，逐步验证工艺与设备线索。由 agent 研究，由专家审查。</p>
         </div>
-        <span :class="['status-pill', { working: s.active }]"
-          ><span :class="{ 'live-dot': s.active }" />{{
-            s.active ? "研究进行中" : "准备就绪"
-          }}</span
-        >
-      </div>
-      <div class="facts">
-        <span
-          ><Activity :size="14" /><b>{{ s.meta?.targets ?? "—" }}</b>
-          个研究对象</span
-        ><span
-          ><FlaskConical :size="14" /><b>{{ s.meta?.controls ?? "—" }}</b>
-          个参考对象</span
-        ><span><i class="tiny-lock" />版本与血缘留存</span
-        ><span class="connection"
-          ><i :class="s.connected ? 'connected' : 'disconnected'" />{{
-            s.connected ? "实时连接" : "连接恢复中"
-          }}</span
-        >
+        <div class="direction-meta">
+          <span v-if="s.meta" class="meta-stat"
+            >对象 <b>{{ s.meta.targets }}</b></span
+          >
+          <span v-if="s.meta" class="meta-stat"
+            >参考 <b>{{ s.meta.controls }}</b></span
+          >
+          <span :class="['status-pill', { working: s.active }]"
+            ><span :class="{ 'live-dot': s.active }" />{{
+              s.active ? "研究进行中" : "准备就绪"
+            }}</span
+          >
+          <span
+            class="connection-chip"
+            :title="s.connected ? '实时连接正常' : '连接恢复中'"
+            ><i :class="s.connected ? 'connected' : 'disconnected'" />{{
+              s.connected ? "已连接" : "重连中"
+            }}</span
+          >
+        </div>
       </div>
       <div ref="scroll" class="conversation" @scroll="onScroll">
         <div v-if="!visibleMessages.length && !s.replaying" class="welcome">
-          <span class="welcome-icon"><FlaskConical :size="32" /></span>
-          <h2>开始一轮有依据的研究</h2>
-          <p>提出问题或补充设备经验。代码、计算与图表会随研究实时呈现。</p>
+          <span class="welcome-icon"><FlaskConical :size="26" /></span>
+          <h2>开始研究</h2>
           <div class="starters">
             <button
               v-for="(text, i) in starters"
@@ -370,6 +438,21 @@ function agentLabel(identity = "main") {
           ><span>结论以证据和可观测范围为界</span>
         </div>
       </div>
+      </template>
+      <TrajectoryView
+        v-else
+        :session="s.selected"
+        :trajectory="s.trajectory"
+        :system-prompts="s.systemPrompts"
+        :branches="[...s.branches, ...s.runtimeWorkers]"
+        :stoppable-branch-ids="s.branches.map((b) => b.id)"
+        :active="s.active"
+        :phase="s.phase"
+        :agent-phases="s.agentPhases"
+        :names="names"
+        :status-label="statusLabel"
+        @stop-branch="stopBranch"
+      />
     </main>
     <aside v-if="s.panel" class="research-panel">
       <div class="panel-title">
@@ -525,7 +608,50 @@ function agentLabel(identity = "main") {
                     : "错误"
             }}</span>
           </summary>
-          <pre v-if="tool.code" class="code-block">{{ tool.code }}</pre>
+          <div v-if="panelToolPython(tool) || panelToolDiff(tool)" class="panel-tool-tabs">
+            <div class="tool-mode-switch" role="tablist">
+              <button
+                v-if="panelToolPython(tool)"
+                type="button"
+                role="tab"
+                :aria-selected="panelToolMode(tool) === 'code'"
+                :class="{ on: panelToolMode(tool) === 'code' }"
+                @click="panelToolTab[tool.id] = 'code'"
+              >
+                代码
+              </button>
+              <button
+                v-else-if="panelToolDiff(tool)"
+                type="button"
+                role="tab"
+                :aria-selected="panelToolMode(tool) === 'diff'"
+                :class="{ on: panelToolMode(tool) === 'diff' }"
+                @click="panelToolTab[tool.id] = 'diff'"
+              >
+                变更
+              </button>
+              <button
+                type="button"
+                role="tab"
+                :aria-selected="panelToolMode(tool) === 'call'"
+                :class="{ on: panelToolMode(tool) === 'call' }"
+                @click="panelToolTab[tool.id] = 'call'"
+              >
+                调用
+              </button>
+            </div>
+          </div>
+          <PythonCellsView
+            v-if="panelToolMode(tool) === 'code' && panelToolPython(tool)"
+            :payload="panelToolPython(tool)!"
+            compact
+          />
+          <CodeDiffView
+            v-else-if="panelToolMode(tool) === 'diff' && panelToolDiff(tool)"
+            :payload="panelToolDiff(tool)!"
+            compact
+          />
+          <pre v-else-if="tool.code" class="code-block">{{ tool.code }}</pre>
           <div v-if="tool.output" class="output">
             <small>输出</small>
             <pre>{{ tool.output }}</pre>

@@ -44,6 +44,32 @@ export type Tool = {
   state: "running" | "ok" | "error";
   elapsed?: number;
 };
+/** 执行轨迹中的单次工具调用与返回记录。 */
+export type TrajectoryTool = {
+  id: string;
+  name: string;
+  code: string;
+  output: string;
+  state: "running" | "ok" | "error";
+  elapsed?: number;
+};
+/** 执行轨迹中的单个节点：用户消息、分配任务，或模型思考 + 工具调用/阶段汇报 + 工具返回。 */
+export type TrajectoryStep = {
+  id: string;
+  kind?: "agent" | "user" | "task";
+  index: number;
+  agent_id: string;
+  call_id?: string;
+  userMessage?: string;
+  thinking: string;
+  content: string;
+  report?: string;
+  reportProvisional?: boolean;
+  modelEnded: boolean;
+  tools: TrajectoryTool[];
+  spawnedBranches: string[];
+  time: number;
+};
 export type Artifact = {
   path: string;
   size: number;
@@ -57,6 +83,7 @@ export type Branch = {
   title: string;
   task: string;
   state: string;
+  worker_type?: string;
   review_status?: string;
   error?: string;
 };
